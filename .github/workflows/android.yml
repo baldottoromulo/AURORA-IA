@@ -1,0 +1,40 @@
+name: Construir APK do AURORA IA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Configurar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Instalar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar plataforma e ferramentas Android
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Compilar APK de depuração
+        run: gradle assembleDebug
+
+      - name: Disponibilizar APK para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: AURORA-IA-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

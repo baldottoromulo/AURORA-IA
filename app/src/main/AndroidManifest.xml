@@ -1,0 +1,24 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <queries>
+        <package android:name="com.waze" />
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:label="AURORA IA"
+        android:theme="@android:style/Theme.Material.NoActionBar"
+        android:supportsRtl="true">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
