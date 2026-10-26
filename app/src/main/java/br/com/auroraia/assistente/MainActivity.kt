@@ -156,70 +156,162 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     private fun handleCommand(raw: String) {
-        if (keyguardManager.isKeyguardLocked) {
-            updateStatus("Ação bloqueada porque o aparelho está bloqueado.")
-            return
+    if (keyguardManager.isKeyguardLocked) {
+        updateStatus("Ação bloqueada porque o aparelho está bloqueado.")
+        return
+    }
+
+    val command = raw.trim()
+    val lower = command.lowercase(Locale("pt", "BR"))
+
+    when {
+        lower.contains("abrir banco") ||
+        lower.contains("abre banco") ||
+        lower.contains("aplicativo bancário") ||
+        lower.contains("meu banco") -> {
+            updateStatus("Bloqueado por segurança: a AURORA IA não abre aplicativos bancários.")
+            speak("Por segurança, não posso abrir aplicativos bancários.")
         }
 
-        val command = raw.trim()
-        val lower = command.lowercase(Locale("pt", "BR"))
+        lower.contains("waze") ||
+        lower.contains("rota para casa") ||
+        lower.contains("ir para casa") ||
+        lower.contains("navegar para") ||
+        lower.contains("navegar até") ||
+        lower.contains("rota para") ||
+        lower.contains("rota até") -> {
 
-        when {
-            lower.contains("abrir banco") || lower.contains("abre banco") ||
-            lower.contains("aplicativo bancário") || lower.contains("meu banco") -> {
-                updateStatus("Bloqueado por segurança: a AURORA IA não abre aplicativos bancários.")
-                speak("Por segurança, não posso abrir aplicativos bancários.")
+            val destination = extractWazeDestination(command)
+
+            if (destination.isBlank() ||
+                destination.equals("waze", ignoreCase = true)) {
+                updateStatus("Diga, por exemplo: abrir Waze e ir para Praia da Costa, Vila Velha.")
+                speak("Para onde você quer ir?")
+            } else {
+                openWazeDestination(destination)
+            }
+        }
+
+        lower.contains("abrir whatsapp") || lower == "whatsapp" -> {
+            openWhatsApp()
+        }
+
+        lower.startsWith("preparar mensagem:") ||
+        lower.startsWith("corrigir mensagem:") -> {
+            val message = command.substringAfter(":").trim()
+
+            if (message.isBlank()) {
+                updateStatus("Diga preparar mensagem e depois fale o texto.")
+            } else {
+                showMessageReview(message)
+            }
+        }
+
+        lower.startsWith("ligar para ") ||
+        lower.startsWith("ligue para ") -> {
+            val contactName = command.substringAfter("para", "").trim()
+
+            updateStatus("Vou abrir o discador. Confirme o contato e a ligação manualmente.")
+
+            try {
+                startActivity(Intent(Intent.ACTION_DIAL))
+            } catch (_: ActivityNotFoundException) {
+                updateStatus("Não encontrei um aplicativo de telefone disponível.")
             }
 
-            lower.contains("abrir waze") || lower == "waze" ||
-            lower.contains("rota para casa") || lower.contains("ir para casa") -> {
-                openWazeHome()
+            if (contactName.isNotBlank()) {
+                Toast.makeText(
+                    this,
+                    "Contato solicitado: $contactName. Selecione-o no telefone.",
+                    Toast.LENGTH_LONG
+                ).show()
             }
+        }
 
-            lower.contains("abrir whatsapp") || lower == "whatsapp" -> {
-                openWhatsApp()
-            }
+        else -> {
+            updateStatus("Ainda não conheço esse comando. Nenhuma ação foi executada.")
+            speak("Ainda não conheço esse comando.")
+        }
+    }
+}
 
-            lower.startsWith("preparar mensagem:") || lower.startsWith("corrigir mensagem:") -> {
-                val message = command.substringAfter(":").trim()
-                if (message.isBlank()) {
-                    updateStatus("Diga “preparar mensagem:” e depois fale o texto.")
-                } else {
-                    showMessageReview(message)
-                }
-            }
+private fun extractWazeDestination(command: String): String {
+    var destination = command.trim()
 
-            lower.startsWith("ligar para ") || lower.startsWith("ligue para ") -> {
-                val contactName = command.substringAfter("para", "").trim()
-                updateStatus("Vou abrir o discador. Confirme o contato e a ligação manualmente.")
-                val dial = Intent(Intent.ACTION_DIAL)
-                try {
-                    startActivity(dial)
-                } catch (_: ActivityNotFoundException) {
-                    updateStatus("Não encontrei um aplicativo de telefone disponível.")
-                }
-                if (contactName.isNotBlank()) {
-                    Toast.makeText(this, "Contato solicitado: $contactName. Selecione-o no telefone.", Toast.LENGTH_LONG).show()
-                }
-            }
+    val prefixes = listOf(
+        "aurora ia",
+        "aurora",
+        "por favor",
+        "você pode",
+        "pode",
+        "abra o",
+        "abra",
+        "abrir o",
+        "abrir",
+        "waze"
+    )
 
-            else -> {
-                updateStatus("Ainda não conheço esse comando nesta versão inicial. Nenhuma ação foi executada.")
-                speak("Ainda não conheço esse comando nesta versão inicial.")
-            }
+    for (prefix in prefixes) {
+        destination = destination.replaceFirst(
+            Regex("^${Regex.escape(prefix)}\\b", RegexOption.IGNORE_CASE),
+            ""
+        ).trim()
+    }
+
+    val markers = listOf(
+        "e me leve para",
+        "e me leve até",
+        "e trace uma rota para",
+        "e trace uma rota até",
+        "e coloque um endereço de",
+        "e procure o endereço de",
+        "e procure",
+        "e pesquise",
+        "e coloque",
+        "navegar para",
+        "navegar até",
+        "ir para",
+        "ir até",
+        "rota para",
+        "rota até",
+        "endereço de",
+        "endereço",
+        "destino",
+        "até",
+        "para"
+    )
+
+    for (marker in markers) {
+        val index = destination.indexOf(marker, ignoreCase = true)
+        if (index >= 0) {
+            destination = destination.substring(index + marker.length).trim()
+            break
         }
     }
 
-    private fun openWazeHome() {
-        val uri = Uri.parse("https://waze.com/ul?q=Home&navigate=yes")
-        try {
-            startActivity(Intent(Intent.ACTION_VIEW, uri))
-            updateStatus("Solicitei ao Waze a abertura da busca por casa. Confira o destino antes de iniciar.")
-        } catch (_: Exception) {
-            updateStatus("Não consegui abrir o Waze. Verifique se ele está instalado.")
-        }
-    }
+    destination = destination
+        .replace(Regex("^[\\s,:-]+"), "")
+        .replace(Regex("[.!?,]+$"), "")
+        .trim()
 
+    return destination
+}
+
+private fun openWazeDestination(destination: String) {
+    val encodedDestination = Uri.encode(destination)
+    val uri = Uri.parse(
+        "https://waze.com/ul?q=$encodedDestination&navigate=no"
+    )
+
+    try {
+        startActivity(Intent(Intent.ACTION_VIEW, uri))
+        updateStatus(
+            "Solicitei ao Waze a busca por: $destination. Confira o destino antes de iniciar a navegação."
+        )
+    } catch (_: Exception) {
+        updateStatus("Não consegui abrir o Waze. Verifique se ele está instalado.")
+    }
+}
     private fun openWhatsApp() {
         val launch = packageManager.getLaunchIntentForPackage("com.whatsapp")
             ?: packageManager.getLaunchIntentForPackage("com.whatsapp.w4b")
