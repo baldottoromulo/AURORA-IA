@@ -185,7 +185,7 @@ class SettingsActivity : Activity() {
         val currentUserId = Process.myUserHandle().toString()
         val labels = unique.mapIndexed { index, item ->
             val (activity, user) = item
-            val profile = if (user.toString() == currentUserId) "perfil principal" else "perfil Android secundário (ID ${user.identifier})"
+            val profile = if (user.toString() == currentUserId) "perfil principal" else "perfil Android secundário (ID ${user.toString()})"
             "Instalação ${index + 1} — ${activity.label} — $profile"
         }.toTypedArray()
 
