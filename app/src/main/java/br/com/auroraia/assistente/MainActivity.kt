@@ -209,6 +209,15 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             }
         }
 
+        lower.contains("whatsapp 2") ||
+        lower.contains("whatsapp dois") ||
+        lower.contains("segundo whatsapp") ||
+        lower.contains("whatsapp secundário") ||
+        lower.contains("whatsapp secundario") ||
+        lower.contains("whatsapp de trabalho") -> {
+            openWhatsAppProfile2()
+        }
+
         lower.contains("abrir whatsapp") || lower == "whatsapp" -> {
             openWhatsApp()
         }
@@ -375,6 +384,46 @@ private fun openWazeDestination(destination: String) {
             }
             .setNegativeButton("Cancelar", null)
             .show()
+    }
+
+    private fun openWhatsAppProfile2() {
+        val prefs = getSharedPreferences("aurora_settings", MODE_PRIVATE)
+        if (!prefs.getBoolean("profile_2_enabled", false)) {
+            updateStatus("O perfil 2 está desativado. Ative-o nas configurações e salve.")
+            speak("O perfil dois está desativado. Ative-o nas configurações.")
+            return
+        }
+
+        val savedComponent = prefs.getString("profile_2_component", null)
+        val savedUser = prefs.getString("profile_2_user_handle", null)
+        if (savedComponent.isNullOrBlank() || savedUser.isNullOrBlank()) {
+            updateStatus("WhatsApp 2 ainda não foi vinculado. Abra as configurações e localize o Dual Messenger.")
+            speak("O WhatsApp dois ainda não foi vinculado. Verifique as configurações.")
+            return
+        }
+
+        val component = android.content.ComponentName.unflattenFromString(savedComponent)
+        if (component == null) {
+            updateStatus("A seleção do WhatsApp 2 está inválida. Localize-o novamente nas configurações.")
+            return
+        }
+
+        try {
+            val launcherApps = getSystemService(LAUNCHER_APPS_SERVICE) as android.content.pm.LauncherApps
+            val targetUser = launcherApps.profiles.firstOrNull { it.toString() == savedUser }
+            if (targetUser == null) {
+                updateStatus("O perfil do WhatsApp 2 não está acessível. Localize-o novamente nas configurações.")
+                speak("Não consegui acessar o perfil dois. Localize-o novamente nas configurações.")
+                return
+            }
+            launcherApps.startMainActivity(component, targetUser, null, null)
+            updateStatus("Comando de voz: abrindo a instalação selecionada do WhatsApp 2.")
+        } catch (_: SecurityException) {
+            updateStatus("O Android/Samsung bloqueou a abertura por voz do WhatsApp 2. Use TESTAR PERFIL 2 nas configurações.")
+            speak("O Android bloqueou a abertura do WhatsApp dois por voz.")
+        } catch (_: Exception) {
+            updateStatus("Não foi possível abrir o WhatsApp 2 por voz. Localize-o novamente nas configurações.")
+        }
     }
 
     private fun openWhatsApp() {
