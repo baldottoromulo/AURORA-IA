@@ -173,8 +173,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 }
             }
             override fun onResults(results: Bundle?) {
-                val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    ?.firstOrNull().orEmpty()
+                val candidates = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
+                val spoken = if (awaitingWhatsAppProfileChoice) {
+                    candidates.firstOrNull { isProfileOne(it) || isProfileTwo(it) }
+                        ?: candidates.firstOrNull().orEmpty()
+                } else candidates.firstOrNull().orEmpty()
                 commandText.text = "Você disse: $spoken"
                 handleCommand(spoken)
             }
@@ -199,6 +202,24 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun normalizeProfileChoice(raw: String): String =
+        raw.lowercase(Locale("pt", "BR"))
+            .replace(Regex("[^\\p{L}\\p{N} ]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+    private fun isProfileOne(raw: String): Boolean {
+        val value = normalizeProfileChoice(raw)
+        return value.matches(Regex("^(perfil )?(1|um|primeiro|primeira|número um|numero um)$")) ||
+            value.matches(Regex(".*\\b(1|um|primeiro|primeira)\\b.*"))
+    }
+
+    private fun isProfileTwo(raw: String): Boolean {
+        val value = normalizeProfileChoice(raw)
+        return value.matches(Regex("^(perfil )?(2|dois|duas|segundo|segunda|número dois|numero dois)$")) ||
+            value.matches(Regex(".*\\b(2|dois|duas|segundo|segunda)\\b.*"))
+    }
+
     private fun handleCommand(raw: String) {
     if (keyguardManager.isKeyguardLocked) {
         updateStatus("Ação bloqueada porque o aparelho está bloqueado.")
@@ -209,19 +230,16 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     val lower = command.lowercase(Locale("pt", "BR"))
 
     if (awaitingWhatsAppProfileChoice) {
-        val choice = lower
-            .replace(Regex("[^\\p{L}\\p{N} ]"), " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
+        val choice = normalizeProfileChoice(lower)
         when {
-            choice.matches(Regex("^(perfil )?(1|um|primeiro|primeira|número um|numero um)$")) -> {
+            isProfileOne(choice) -> {
                 awaitingWhatsAppProfileChoice = false
                 whatsappProfileChoiceRetries = 0
                 updateStatus("Ok, perfil 1.")
                 speak("Ok, perfil um.")
                 openWhatsApp()
             }
-            choice.matches(Regex("^(perfil )?(2|dois|duas|segundo|segunda|número dois|numero dois)$")) -> {
+            isProfileTwo(choice) -> {
                 awaitingWhatsAppProfileChoice = false
                 whatsappProfileChoiceRetries = 0
                 updateStatus("Ok, perfil 2.")
