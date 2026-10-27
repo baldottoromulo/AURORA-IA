@@ -25,6 +25,7 @@ import java.util.Locale
 
 class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var speechRecognizer: SpeechRecognizer? = null
+    private var speechSessionId = 0
     private var tts: TextToSpeech? = null
     private lateinit var statusText: TextView
     private lateinit var commandText: TextView
@@ -135,6 +136,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             return
         }
 
+        // Cada escuta recebe um identificador. Resultados atrasados de uma sessão
+        // anterior não podem sobrescrever a escolha atual nem disparar comandos.
+        speechSessionId++
+        val activeSessionId = speechSessionId
+        speechRecognizer?.cancel()
         speechRecognizer?.destroy()
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
         speechRecognizer?.setRecognitionListener(object : RecognitionListener {
@@ -144,6 +150,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() { updateStatus("Processando seu comando…") }
             override fun onError(error: Int) {
+                if (activeSessionId != speechSessionId) return
                 if (awaitingWhatsAppProfileChoice) {
                     // O reconhecimento pode encerrar cedo ou falhar por silêncio/ruído.
                     // Dar várias janelas de escuta sem anunciar falha após apenas duas tentativas.
@@ -179,6 +186,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 }
             }
             override fun onResults(results: Bundle?) {
+                if (activeSessionId != speechSessionId) return
                 val candidates = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
                 val spoken = if (awaitingWhatsAppProfileChoice) {
                     candidates.firstOrNull { isProfileOne(it) || isProfileTwo(it) }
@@ -498,6 +506,12 @@ private fun openWazeDestination(destination: String) {
     }
 
     private fun speakAndListenForProfile(message: String) {
+        // Invalida a escuta anterior antes da fala, evitando que um callback antigo
+        // interprete o silêncio durante a pergunta como uma nova falha.
+        speechSessionId++
+        speechRecognizer?.cancel()
+        speechRecognizer?.destroy()
+        speechRecognizer = null
         val engine = tts
         if (engine == null) {
             updateStatus("Não foi possível falar a pergunta. Toque no microfone e diga 1 ou 2.")
