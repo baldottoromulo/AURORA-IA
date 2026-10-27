@@ -3,6 +3,7 @@ package br.com.auroraia.assistente
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.KeyguardManager
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -93,16 +94,18 @@ class SettingsActivity : Activity() {
             }.also { root.addView(it, matchWrap()) }
         }
 
-        repeat(2) { index ->
-            val targetButton = Button(this).apply {
-                text = "Instalação do WhatsApp — perfil ${index + 1}"
-                setOnClickListener { chooseInstallation(index, this) }
-            }
-            root.addView(targetButton, matchWrap())
-        }
+        root.addView(Button(this).apply {
+            text = "Escolher WhatsApp — perfil 1"
+            setOnClickListener { chooseInstallation(0, this) }
+        }, matchWrap())
+
+        root.addView(Button(this).apply {
+            text = "ESCOLHER APLICATIVO — PERFIL 2"
+            setOnClickListener { chooseAppForProfile2(this) }
+        }, matchWrap())
 
         root.addView(TextView(this).apply {
-            text = "Nota sobre Samsung Dual Messenger: o Android pode apresentar a cópia duplicada de forma diferente conforme o aparelho. Se a cópia não aparecer no seletor, esta versão ainda não consegue vinculá-la por identificador próprio."
+            text = "No perfil 2, escolha um aplicativo instalado na lista. A AURORA guardará a atividade escolhida e tentará abri-la pelo botão TESTAR PERFIL 2. A cópia do Samsung Dual Messenger só aparecerá se o Android a disponibilizar para outros aplicativos."
             textSize = 13f
             setTextColor(0xFFFFD18A.toInt())
             setPadding(0, 16, 0, 8)
@@ -141,6 +144,44 @@ class SettingsActivity : Activity() {
             .show()
     }
 
+    private fun chooseAppForProfile2(button: Button) {
+        if (keyguardManager.isKeyguardLocked) {
+            Toast.makeText(this, "Desbloqueie o aparelho antes de escolher um aplicativo.", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val activities = packageManager.queryIntentActivities(launcherIntent, 0)
+            .filter { it.activityInfo.packageName != packageName }
+            .distinctBy { ComponentName(it.activityInfo.packageName, it.activityInfo.name).flattenToString() }
+            .sortedBy { it.loadLabel(packageManager).toString().lowercase() }
+
+        if (activities.isEmpty()) {
+            Toast.makeText(this, "Não encontrei aplicativos disponíveis para seleção.", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val labels = activities.map { info ->
+            "${info.loadLabel(packageManager)} — ${info.activityInfo.packageName}"
+        }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("Escolha o aplicativo do perfil 2")
+            .setItems(labels) { _, which ->
+                val selected = activities[which]
+                val component = ComponentName(selected.activityInfo.packageName, selected.activityInfo.name)
+                profilePackages[1] = selected.activityInfo.packageName
+                getSharedPreferences("aurora_settings", MODE_PRIVATE).edit()
+                    .putString("profile_2_component", component.flattenToString())
+                    .putString("profile_2_package", selected.activityInfo.packageName)
+                    .apply()
+                button.text = "Perfil 2: ${selected.loadLabel(packageManager)}"
+                Toast.makeText(this, "Aplicativo associado ao perfil 2. Use TESTAR PERFIL 2 para conferir.", Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
     private fun saveSettings() {
         if (keyguardManager.isKeyguardLocked) {
             Toast.makeText(this, "Ação bloqueada enquanto o aparelho estiver bloqueado.", Toast.LENGTH_LONG).show()
@@ -173,6 +214,23 @@ class SettingsActivity : Activity() {
         if (!profileEnabled[index].isChecked) {
             Toast.makeText(this, "Ative esse perfil antes de testá-lo.", Toast.LENGTH_LONG).show()
             return
+        }
+        val prefs = getSharedPreferences("aurora_settings", MODE_PRIVATE)
+        if (index == 1) {
+            val savedComponent = prefs.getString("profile_2_component", null)
+            if (!savedComponent.isNullOrBlank()) {
+                val component = ComponentName.unflattenFromString(savedComponent)
+                val intent = component?.let { Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setComponent(it) }
+                if (intent != null) {
+                    try {
+                        startActivity(intent)
+                        return
+                    } catch (_: Exception) {
+                        Toast.makeText(this, "O aplicativo salvo não pôde ser aberto. Escolha-o novamente.", Toast.LENGTH_LONG).show()
+                        return
+                    }
+                }
+            }
         }
         val packageName = profilePackages[index]
         if (packageName.isBlank()) {
