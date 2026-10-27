@@ -144,7 +144,20 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() { updateStatus("Processando seu comando…") }
             override fun onError(error: Int) {
-                updateStatus("Não consegui reconhecer a fala. Tente novamente.")
+                if (awaitingWhatsAppProfileChoice) {
+                    whatsappProfileChoiceRetries++
+                    if (whatsappProfileChoiceRetries >= 3) {
+                        awaitingWhatsAppProfileChoice = false
+                        whatsappProfileChoiceRetries = 0
+                        updateStatus("Não consegui entender. Toque no microfone e diga perfil 1 ou perfil 2.")
+                        speak("Não entendi. Toque no microfone e diga perfil um ou perfil dois.")
+                    } else {
+                        updateStatus("Não ouvi uma escolha válida. Tentando novamente: perfil 1 ou perfil 2.")
+                        speakAndListenForProfile("Não entendi. Perfil 1 ou perfil 2?")
+                    }
+                } else {
+                    updateStatus("Não consegui reconhecer a fala. Toque no microfone e tente novamente.")
+                }
             }
             override fun onResults(results: Bundle?) {
                 val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
@@ -159,7 +172,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR")
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Fale seu comando para a AURORA IA")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, if (awaitingWhatsAppProfileChoice) "Diga perfil 1 ou perfil 2" else "Fale seu comando para a AURORA IA")
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 3500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 6000L)
         }
         try {
             speechRecognizer?.startListening(intent)
@@ -183,14 +201,18 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             .replace(Regex("\\s+"), " ")
             .trim()
         when {
-            choice.matches(Regex("^(perfil )?(1|um|primeiro|primeira)$")) -> {
+            choice.matches(Regex("^(perfil )?(1|um|primeiro|primeira|número um|numero um)$")) -> {
                 awaitingWhatsAppProfileChoice = false
                 whatsappProfileChoiceRetries = 0
+                updateStatus("Ok, perfil 1.")
+                speak("Ok, perfil um.")
                 openWhatsApp()
             }
-            choice.matches(Regex("^(perfil )?(2|dois|segundo|segunda)$")) -> {
+            choice.matches(Regex("^(perfil )?(2|dois|duas|segundo|segunda|número dois|numero dois)$")) -> {
                 awaitingWhatsAppProfileChoice = false
                 whatsappProfileChoiceRetries = 0
+                updateStatus("Ok, perfil 2.")
+                speak("Ok, perfil dois.")
                 openWhatsAppProfile2()
             }
             else -> {
