@@ -145,27 +145,33 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             override fun onEndOfSpeech() { updateStatus("Processando seu comando…") }
             override fun onError(error: Int) {
                 if (awaitingWhatsAppProfileChoice) {
-                    when (whatsappProfileChoiceRetries) {
-                        0 -> {
-                            // Primeira falha/silêncio: tentar ouvir de novo sem interromper com fala.
-                            whatsappProfileChoiceRetries = 1
-                            updateStatus("Estou ouvindo. Diga perfil 1 ou perfil 2.")
+                    // O reconhecimento pode encerrar cedo ou falhar por silêncio/ruído.
+                    // Dar várias janelas de escuta sem anunciar falha após apenas duas tentativas.
+                    when {
+                        whatsappProfileChoiceRetries < 3 -> {
+                            whatsappProfileChoiceRetries++
+                            updateStatus("Aguardando sua resposta. Diga perfil 1 ou perfil 2; você pode falar novamente.")
                             window.decorView.postDelayed({
                                 if (awaitingWhatsAppProfileChoice) startListening()
-                            }, 300L)
+                            }, 900L)
                         }
-                        1 -> {
-                            // Após a primeira janela de escuta, avisar e abrir uma nova janela.
-                            whatsappProfileChoiceRetries = 2
-                            updateStatus("Não entendi. Vou ouvir novamente; diga perfil 1 ou perfil 2.")
-                            speakAndListenForProfile("Não entendi. Diga perfil um ou perfil dois.")
+                        whatsappProfileChoiceRetries == 3 -> {
+                            whatsappProfileChoiceRetries++
+                            updateStatus("Ainda aguardando. Vou repetir a pergunta e ouvir novamente.")
+                            speakAndListenForProfile("Qual perfil você deseja abrir? Diga perfil um ou perfil dois.")
+                        }
+                        whatsappProfileChoiceRetries < 6 -> {
+                            whatsappProfileChoiceRetries++
+                            updateStatus("Não captei sua resposta. Tente dizer apenas um ou dois.")
+                            window.decorView.postDelayed({
+                                if (awaitingWhatsAppProfileChoice) startListening()
+                            }, 1200L)
                         }
                         else -> {
-                            // Limite de tentativas: evitar repetição infinita.
                             awaitingWhatsAppProfileChoice = false
                             whatsappProfileChoiceRetries = 0
-                            updateStatus("Não consegui identificar o perfil. Toque no microfone para tentar novamente.")
-                            speak("Não consegui identificar o perfil. Toque no microfone para tentar novamente.")
+                            updateStatus("Não consegui ouvir a escolha após várias tentativas. Toque no microfone para tentar novamente.")
+                            speak("Não consegui ouvir sua escolha. Toque no microfone quando estiver pronto e diga perfil um ou perfil dois.")
                         }
                     }
                 } else {
