@@ -6,6 +6,10 @@ import android.app.KeyguardManager
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.LauncherApps
+import android.content.pm.LauncherActivityInfo
+import android.os.Process
+import android.os.UserHandle
 import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
@@ -100,12 +104,12 @@ class SettingsActivity : Activity() {
         }, matchWrap())
 
         root.addView(Button(this).apply {
-            text = "ESCOLHER APLICATIVO — PERFIL 2"
-            setOnClickListener { chooseAppForProfile2(this) }
+            text = "LOCALIZAR WHATSAPP 2 (DUAL MESSENGER)"
+            setOnClickListener { chooseWhatsAppProfile2(this) }
         }, matchWrap())
 
         root.addView(TextView(this).apply {
-            text = "No perfil 2, escolha um aplicativo instalado na lista. A AURORA guardará a atividade escolhida e tentará abri-la pelo botão TESTAR PERFIL 2. A cópia do Samsung Dual Messenger só aparecerá se o Android a disponibilizar para outros aplicativos."
+            text = "A AURORA procura as instalações do WhatsApp nos perfis Android visíveis ao sistema. Se a Samsung ocultar a cópia do Dual Messenger, informará isso em vez de selecionar o WhatsApp pessoal por engano."
             textSize = 13f
             setTextColor(0xFFFFD18A.toInt())
             setPadding(0, 16, 0, 8)
@@ -144,39 +148,59 @@ class SettingsActivity : Activity() {
             .show()
     }
 
-    private fun chooseAppForProfile2(button: Button) {
+    private fun chooseWhatsAppProfile2(button: Button) {
         if (keyguardManager.isKeyguardLocked) {
-            Toast.makeText(this, "Desbloqueie o aparelho antes de escolher um aplicativo.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Desbloqueie o aparelho antes de localizar o WhatsApp 2.", Toast.LENGTH_LONG).show()
             return
         }
 
-        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val activities = packageManager.queryIntentActivities(launcherIntent, 0)
-            .filter { it.activityInfo.packageName != packageName }
-            .distinctBy { ComponentName(it.activityInfo.packageName, it.activityInfo.name).flattenToString() }
-            .sortedBy { it.loadLabel(packageManager).toString().lowercase() }
-
-        if (activities.isEmpty()) {
-            Toast.makeText(this, "Não encontrei aplicativos disponíveis para seleção.", Toast.LENGTH_LONG).show()
+        val launcherApps = getSystemService(LAUNCHER_APPS_SERVICE) as LauncherApps
+        val installations = mutableListOf<Pair<LauncherActivityInfo, UserHandle>>()
+        try {
+            launcherApps.profiles.forEach { user ->
+                launcherApps.getActivityList("com.whatsapp", user).forEach { activity ->
+                    installations.add(activity to user)
+                }
+            }
+        } catch (_: SecurityException) {
+            Toast.makeText(this, "O Android bloqueou a consulta aos perfis. A cópia do Dual Messenger pode estar oculta para a AURORA.", Toast.LENGTH_LONG).show()
+            return
+        } catch (_: Exception) {
+            Toast.makeText(this, "Não foi possível consultar as instalações do WhatsApp neste aparelho.", Toast.LENGTH_LONG).show()
             return
         }
 
-        val labels = activities.map { info ->
-            "${info.loadLabel(packageManager)} — ${info.activityInfo.packageName}"
+        val unique = installations.distinctBy { (activity, user) ->
+            activity.componentName.flattenToString() + ":" + user.identifier
+        }
+        if (unique.size < 2) {
+            AlertDialog.Builder(this)
+                .setTitle("WhatsApp 2 não localizado")
+                .setMessage("O Android disponibilizou apenas uma instalação do WhatsApp para a AURORA. A Samsung pode ocultar a cópia do Dual Messenger para aplicativos externos. Nenhuma configuração foi alterada. Confira se o Dual Messenger está ativado e tente novamente.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+
+        val currentUserId = Process.myUserHandle().identifier
+        val labels = unique.mapIndexed { index, item ->
+            val (activity, user) = item
+            val profile = if (user.identifier == currentUserId) "perfil principal" else "perfil Android secundário (ID ${user.identifier})"
+            "Instalação ${index + 1} — ${activity.label} — $profile"
         }.toTypedArray()
 
         AlertDialog.Builder(this)
-            .setTitle("Escolha o aplicativo do perfil 2")
+            .setTitle("Selecione a instalação do WhatsApp 2")
             .setItems(labels) { _, which ->
-                val selected = activities[which]
-                val component = ComponentName(selected.activityInfo.packageName, selected.activityInfo.name)
-                profilePackages[1] = selected.activityInfo.packageName
+                val (activity, user) = unique[which]
+                profilePackages[1] = "com.whatsapp"
                 getSharedPreferences("aurora_settings", MODE_PRIVATE).edit()
-                    .putString("profile_2_component", component.flattenToString())
-                    .putString("profile_2_package", selected.activityInfo.packageName)
+                    .putString("profile_2_component", activity.componentName.flattenToString())
+                    .putInt("profile_2_user_id", user.identifier)
+                    .putString("profile_2_package", "com.whatsapp")
                     .apply()
-                button.text = "Perfil 2: ${selected.loadLabel(packageManager)}"
-                Toast.makeText(this, "Aplicativo associado ao perfil 2. Use TESTAR PERFIL 2 para conferir.", Toast.LENGTH_LONG).show()
+                button.text = "WhatsApp 2 selecionado"
+                Toast.makeText(this, "Instalação associada. Toque em SALVAR CONFIGURAÇÕES e depois em TESTAR PERFIL 2.", Toast.LENGTH_LONG).show()
             }
             .setNegativeButton("Cancelar", null)
             .show()
@@ -220,15 +244,26 @@ class SettingsActivity : Activity() {
             val savedComponent = prefs.getString("profile_2_component", null)
             if (!savedComponent.isNullOrBlank()) {
                 val component = ComponentName.unflattenFromString(savedComponent)
-                val intent = component?.let { Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setComponent(it) }
-                if (intent != null) {
-                    try {
-                        startActivity(intent)
-                        return
-                    } catch (_: Exception) {
-                        Toast.makeText(this, "O aplicativo salvo não pôde ser aberto. Escolha-o novamente.", Toast.LENGTH_LONG).show()
+                val targetUserId = prefs.getInt("profile_2_user_id", -1)
+                if (component == null || targetUserId < 0) {
+                    Toast.makeText(this, "Seleção do WhatsApp 2 incompleta. Localize-o novamente.", Toast.LENGTH_LONG).show()
+                    return
+                }
+                try {
+                    val launcherApps = getSystemService(LAUNCHER_APPS_SERVICE) as LauncherApps
+                    val targetUser = launcherApps.profiles.firstOrNull { it.identifier == targetUserId }
+                    if (targetUser == null) {
+                        Toast.makeText(this, "O perfil selecionado não está acessível agora. Localize o WhatsApp 2 novamente.", Toast.LENGTH_LONG).show()
                         return
                     }
+                    launcherApps.startMainActivity(component, targetUser, null, null)
+                    return
+                } catch (_: SecurityException) {
+                    Toast.makeText(this, "O Android/Samsung bloqueou a abertura direta dessa instalação. O Dual Messenger pode não permitir esse acesso.", Toast.LENGTH_LONG).show()
+                    return
+                } catch (_: Exception) {
+                    Toast.makeText(this, "Não foi possível abrir a instalação selecionada. Localize o WhatsApp 2 novamente.", Toast.LENGTH_LONG).show()
+                    return
                 }
             }
         }
