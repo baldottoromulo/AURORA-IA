@@ -84,7 +84,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val whatsappSettingsButton = Button(this).apply {
             text = "⚙  ESCOLHER WHATSAPP"
             textSize = 15f
-            setOnClickListener { selectWhatsApp() }
+            setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
         }
 
         val help = TextView(this).apply {
