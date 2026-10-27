@@ -171,7 +171,7 @@ class SettingsActivity : Activity() {
         }
 
         val unique = installations.distinctBy { (activity, user) ->
-            activity.componentName.flattenToString() + ":" + user.identifier
+            activity.componentName.flattenToString() + ":" + user.toString()
         }
         if (unique.size < 2) {
             AlertDialog.Builder(this)
@@ -182,10 +182,10 @@ class SettingsActivity : Activity() {
             return
         }
 
-        val currentUserId = Process.myUserHandle().identifier
+        val currentUserId = Process.myUserHandle().toString()
         val labels = unique.mapIndexed { index, item ->
             val (activity, user) = item
-            val profile = if (user.identifier == currentUserId) "perfil principal" else "perfil Android secundário (ID ${user.identifier})"
+            val profile = if (user.toString() == currentUserId) "perfil principal" else "perfil Android secundário (ID ${user.identifier})"
             "Instalação ${index + 1} — ${activity.label} — $profile"
         }.toTypedArray()
 
@@ -196,7 +196,7 @@ class SettingsActivity : Activity() {
                 profilePackages[1] = "com.whatsapp"
                 getSharedPreferences("aurora_settings", MODE_PRIVATE).edit()
                     .putString("profile_2_component", activity.componentName.flattenToString())
-                    .putInt("profile_2_user_id", user.identifier)
+                    .putString("profile_2_user_handle", user.toString())
                     .putString("profile_2_package", "com.whatsapp")
                     .apply()
                 button.text = "WhatsApp 2 selecionado"
@@ -244,14 +244,14 @@ class SettingsActivity : Activity() {
             val savedComponent = prefs.getString("profile_2_component", null)
             if (!savedComponent.isNullOrBlank()) {
                 val component = ComponentName.unflattenFromString(savedComponent)
-                val targetUserId = prefs.getInt("profile_2_user_id", -1)
-                if (component == null || targetUserId < 0) {
+                val targetUserId = prefs.getString("profile_2_user_handle", null)
+                if (component == null || targetUserId == null) {
                     Toast.makeText(this, "Seleção do WhatsApp 2 incompleta. Localize-o novamente.", Toast.LENGTH_LONG).show()
                     return
                 }
                 try {
                     val launcherApps = getSystemService(LAUNCHER_APPS_SERVICE) as LauncherApps
-                    val targetUser = launcherApps.profiles.firstOrNull { it.identifier == targetUserId }
+                    val targetUser = launcherApps.profiles.firstOrNull { it.toString() == targetUserId }
                     if (targetUser == null) {
                         Toast.makeText(this, "O perfil selecionado não está acessível agora. Localize o WhatsApp 2 novamente.", Toast.LENGTH_LONG).show()
                         return
