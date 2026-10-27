@@ -145,12 +145,29 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             override fun onEndOfSpeech() { updateStatus("Processando seu comando…") }
             override fun onError(error: Int) {
                 if (awaitingWhatsAppProfileChoice) {
-                    // Não reiniciar automaticamente: evita ciclos de pergunta quando o serviço
-                    // de reconhecimento encerra a escuta por silêncio ou falha.
-                    awaitingWhatsAppProfileChoice = false
-                    whatsappProfileChoiceRetries = 0
-                    updateStatus("Não entendi a escolha. Toque no microfone e diga perfil 1 ou perfil 2.")
-                    speak("Não entendi a escolha. Toque no microfone e diga perfil um ou perfil dois.")
+                    when (whatsappProfileChoiceRetries) {
+                        0 -> {
+                            // Primeira falha/silêncio: tentar ouvir de novo sem interromper com fala.
+                            whatsappProfileChoiceRetries = 1
+                            updateStatus("Estou ouvindo. Diga perfil 1 ou perfil 2.")
+                            window.decorView.postDelayed({
+                                if (awaitingWhatsAppProfileChoice) startListening()
+                            }, 300L)
+                        }
+                        1 -> {
+                            // Após a primeira janela de escuta, avisar e abrir uma nova janela.
+                            whatsappProfileChoiceRetries = 2
+                            updateStatus("Não entendi. Vou ouvir novamente; diga perfil 1 ou perfil 2.")
+                            speakAndListenForProfile("Não entendi. Diga perfil um ou perfil dois.")
+                        }
+                        else -> {
+                            // Limite de tentativas: evitar repetição infinita.
+                            awaitingWhatsAppProfileChoice = false
+                            whatsappProfileChoiceRetries = 0
+                            updateStatus("Não consegui identificar o perfil. Toque no microfone para tentar novamente.")
+                            speak("Não consegui identificar o perfil. Toque no microfone para tentar novamente.")
+                        }
+                    }
                 } else {
                     updateStatus("Não consegui reconhecer a fala. Toque no microfone e tente novamente.")
                 }
