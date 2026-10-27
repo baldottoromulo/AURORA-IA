@@ -145,16 +145,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             override fun onEndOfSpeech() { updateStatus("Processando seu comando…") }
             override fun onError(error: Int) {
                 if (awaitingWhatsAppProfileChoice) {
-                    whatsappProfileChoiceRetries++
-                    if (whatsappProfileChoiceRetries >= 3) {
-                        awaitingWhatsAppProfileChoice = false
-                        whatsappProfileChoiceRetries = 0
-                        updateStatus("Não consegui entender. Toque no microfone e diga perfil 1 ou perfil 2.")
-                        speak("Não entendi. Toque no microfone e diga perfil um ou perfil dois.")
-                    } else {
-                        updateStatus("Não ouvi uma escolha válida. Tentando novamente: perfil 1 ou perfil 2.")
-                        speakAndListenForProfile("Não entendi. Perfil 1 ou perfil 2?")
-                    }
+                    // Não reiniciar automaticamente: evita ciclos de pergunta quando o serviço
+                    // de reconhecimento encerra a escuta por silêncio ou falha.
+                    awaitingWhatsAppProfileChoice = false
+                    whatsappProfileChoiceRetries = 0
+                    updateStatus("Não entendi a escolha. Toque no microfone e diga perfil 1 ou perfil 2.")
+                    speak("Não entendi a escolha. Toque no microfone e diga perfil um ou perfil dois.")
                 } else {
                     updateStatus("Não consegui reconhecer a fala. Toque no microfone e tente novamente.")
                 }
@@ -216,16 +212,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 openWhatsAppProfile2()
             }
             else -> {
-                whatsappProfileChoiceRetries++
-                if (whatsappProfileChoiceRetries >= 3) {
-                    awaitingWhatsAppProfileChoice = false
-                    whatsappProfileChoiceRetries = 0
-                    updateStatus("Não reconheci a escolha. Toque no microfone e diga perfil 1 ou perfil 2.")
-                    speak("Não entendi. Toque no microfone e diga perfil um ou perfil dois.")
-                } else {
-                    updateStatus("Escolha não reconhecida. Aguardando perfil 1 ou perfil 2.")
-                    speakAndListenForProfile("Perfil 1 ou perfil 2?")
-                }
+                awaitingWhatsAppProfileChoice = false
+                whatsappProfileChoiceRetries = 0
+                updateStatus("Não entendi a escolha. Toque no microfone e diga perfil 1 ou perfil 2.")
+                speak("Não entendi a escolha. Toque no microfone e diga perfil um ou perfil dois.")
             }
         }
         return
