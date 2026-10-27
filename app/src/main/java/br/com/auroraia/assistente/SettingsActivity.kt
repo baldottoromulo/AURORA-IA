@@ -74,7 +74,7 @@ class SettingsActivity : Activity() {
         profileName = Array(2) { index ->
             EditText(this).apply {
                 hint = if (index == 0) "Nome do perfil 1 (ex.: Pessoal)" else "Nome do perfil 2 (ex.: Trabalho)"
-                singleLine = true
+                setSingleLine(true)
                 textSize = 16f
                 setTextColor(0xFFFFFFFF.toInt())
                 setHintTextColor(0xFF9AA9BD.toInt())
@@ -84,7 +84,7 @@ class SettingsActivity : Activity() {
         profileNumber = Array(2) { index ->
             EditText(this).apply {
                 hint = if (index == 0) "Número do perfil 1 (opcional)" else "Número do perfil 2 (opcional)"
-                singleLine = true
+                setSingleLine(true)
                 inputType = android.text.InputType.TYPE_CLASS_PHONE
                 textSize = 16f
                 setTextColor(0xFFFFFFFF.toInt())
