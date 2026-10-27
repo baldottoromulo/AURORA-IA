@@ -214,7 +214,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         lower.contains("segundo whatsapp") ||
         lower.contains("whatsapp secundário") ||
         lower.contains("whatsapp secundario") ||
-        lower.contains("whatsapp de trabalho") -> {
+        (lower.contains("whatsapp") && lower.contains("trabalho")) -> {
             openWhatsAppProfile2()
         }
 
