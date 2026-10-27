@@ -214,8 +214,17 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         lower.contains("segundo whatsapp") ||
         lower.contains("whatsapp secundário") ||
         lower.contains("whatsapp secundario") ||
+        lower.contains("whatsapp profissional") ||
+        lower.contains("whatsapp comercial") ||
         (lower.contains("whatsapp") && lower.contains("trabalho")) -> {
             openWhatsAppProfile2()
+        }
+
+        lower.contains("whatsapp pessoal") ||
+        lower.contains("whatsapp principal") ||
+        lower.contains("whatsapp 1") ||
+        lower.contains("whatsapp um") -> {
+            openWhatsApp()
         }
 
         lower.contains("abrir whatsapp") || lower == "whatsapp" -> {
