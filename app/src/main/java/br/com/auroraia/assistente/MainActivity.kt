@@ -13,6 +13,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
@@ -29,6 +30,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var commandText: TextView
     private lateinit var listenButton: Button
     private lateinit var keyguardManager: KeyguardManager
+    private var awaitingWhatsAppProfileChoice = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -174,6 +176,21 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     val command = raw.trim()
     val lower = command.lowercase(Locale("pt", "BR"))
 
+    if (awaitingWhatsAppProfileChoice) {
+        awaitingWhatsAppProfileChoice = false
+        when {
+            lower.matches(Regex("^(perfil\\s*)?1(\\s*perfil)?[.! ]*$")) ||
+                lower.contains("perfil um") || lower == "um" -> openWhatsApp()
+            lower.matches(Regex("^(perfil\\s*)?2(\\s*perfil)?[.! ]*$")) ||
+                lower.contains("perfil dois") || lower == "dois" -> openWhatsAppProfile2()
+            else -> {
+                updateStatus("Resposta não reconhecida. Diga perfil 1 ou 1, ou perfil 2 ou 2.")
+                speak("Não entendi. Diga perfil um ou perfil dois.")
+            }
+        }
+        return
+    }
+
     when {
         lower.contains("abrir banco") ||
         lower.contains("abre banco") ||
@@ -209,6 +226,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             }
         }
 
+        (lower.contains("whatsapp") && (lower.contains("tim") || lower.contains("perfil 2") || lower.contains("perfil dois"))) ||
         lower.contains("whatsapp 2") ||
         lower.contains("whatsapp dois") ||
         lower.contains("segundo whatsapp") ||
@@ -220,6 +238,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             openWhatsAppProfile2()
         }
 
+        (lower.contains("whatsapp") && (lower.contains("vivo") || lower.contains("perfil 1") || lower.contains("perfil um"))) ||
         lower.contains("whatsapp pessoal") ||
         lower.contains("whatsapp principal") ||
         lower.contains("whatsapp 1") ||
@@ -228,7 +247,18 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
 
         lower.contains("abrir whatsapp") || lower == "whatsapp" -> {
-            openWhatsApp()
+            val prefs = getSharedPreferences("aurora_settings", MODE_PRIVATE)
+            val profile1Enabled = prefs.getBoolean("profile_1_enabled", true)
+            val profile2Enabled = prefs.getBoolean("profile_2_enabled", false)
+            if (profile1Enabled && profile2Enabled) {
+                awaitingWhatsAppProfileChoice = true
+                updateStatus("Aguardando escolha: perfil 1 ou perfil 2.")
+                speakAndListenForProfile("Qual WhatsApp você deseja abrir: perfil 1 ou perfil 2?")
+            } else if (profile2Enabled && !profile1Enabled) {
+                openWhatsAppProfile2()
+            } else {
+                openWhatsApp()
+            }
         }
 
         lower.startsWith("preparar mensagem:") ||
@@ -393,6 +423,30 @@ private fun openWazeDestination(destination: String) {
             }
             .setNegativeButton("Cancelar", null)
             .show()
+    }
+
+    private fun speakAndListenForProfile(message: String) {
+        val engine = tts
+        if (engine == null) {
+            updateStatus("Não foi possível falar a pergunta. Toque no microfone e diga 1 ou 2.")
+            return
+        }
+        engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {}
+            override fun onError(utteranceId: String?) {
+                runOnUiThread {
+                    if (awaitingWhatsAppProfileChoice) startListening()
+                }
+            }
+            override fun onDone(utteranceId: String?) {
+                if (utteranceId == "whatsapp-profile-question") {
+                    runOnUiThread {
+                        if (awaitingWhatsAppProfileChoice) startListening()
+                    }
+                }
+            }
+        })
+        engine.speak(message, TextToSpeech.QUEUE_FLUSH, null, "whatsapp-profile-question")
     }
 
     private fun openWhatsAppProfile2() {
