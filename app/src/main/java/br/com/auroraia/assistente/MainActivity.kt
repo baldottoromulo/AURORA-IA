@@ -173,7 +173,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             speak("Por segurança, não posso abrir aplicativos bancários.")
         }
 
-        lower.contains("waze") ||
+    lower == "abrir waze" ||
+    lower == "abrir o waze" ||
+    lower == "abra o waze" ||
+    lower == "abra waze" ||
+    lower == "waze" -> {
+    openWaze()
+    }
+    lower.contains("waze") ||
         lower.contains("rota para casa") ||
         lower.contains("ir para casa") ||
         lower.contains("navegar para") ||
@@ -310,6 +317,28 @@ private fun openWazeDestination(destination: String) {
         )
     } catch (_: Exception) {
         updateStatus("Não consegui abrir o Waze. Verifique se ele está instalado.")
+    }
+}
+   private fun openWaze() {
+    try {
+        val launchIntent =
+            packageManager.getLaunchIntentForPackage("com.waze")
+
+        if (launchIntent != null) {
+            startActivity(launchIntent)
+            updateStatus("Waze aberto. Diga o destino quando quiser preparar uma rota.")
+            speak("Waze aberto. Para onde você quer ir?")
+        } else {
+            val intent = Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse("https://waze.com/")
+            )
+            startActivity(intent)
+            updateStatus("Abrindo a página do Waze.")
+        }
+    } catch (_: Exception) {
+        updateStatus("Não consegui abrir o Waze. Verifique se ele está instalado.")
+        speak("Não consegui abrir o Waze.")
     }
 }
     private fun openWhatsApp() {
