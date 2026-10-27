@@ -31,6 +31,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var listenButton: Button
     private lateinit var keyguardManager: KeyguardManager
     private var awaitingWhatsAppProfileChoice = false
+    private var whatsappProfileChoiceRetries = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -177,15 +178,32 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     val lower = command.lowercase(Locale("pt", "BR"))
 
     if (awaitingWhatsAppProfileChoice) {
-        awaitingWhatsAppProfileChoice = false
+        val choice = lower
+            .replace(Regex("[^\\p{L}\\p{N} ]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
         when {
-            lower.matches(Regex("^(perfil\\s*)?1(\\s*perfil)?[.! ]*$")) ||
-                lower.contains("perfil um") || lower == "um" -> openWhatsApp()
-            lower.matches(Regex("^(perfil\\s*)?2(\\s*perfil)?[.! ]*$")) ||
-                lower.contains("perfil dois") || lower == "dois" -> openWhatsAppProfile2()
+            choice.matches(Regex("^(perfil )?(1|um|primeiro|primeira)$")) -> {
+                awaitingWhatsAppProfileChoice = false
+                whatsappProfileChoiceRetries = 0
+                openWhatsApp()
+            }
+            choice.matches(Regex("^(perfil )?(2|dois|segundo|segunda)$")) -> {
+                awaitingWhatsAppProfileChoice = false
+                whatsappProfileChoiceRetries = 0
+                openWhatsAppProfile2()
+            }
             else -> {
-                updateStatus("Resposta não reconhecida. Diga perfil 1 ou 1, ou perfil 2 ou 2.")
-                speak("Não entendi. Diga perfil um ou perfil dois.")
+                whatsappProfileChoiceRetries++
+                if (whatsappProfileChoiceRetries >= 3) {
+                    awaitingWhatsAppProfileChoice = false
+                    whatsappProfileChoiceRetries = 0
+                    updateStatus("Não reconheci a escolha. Toque no microfone e diga perfil 1 ou perfil 2.")
+                    speak("Não entendi. Toque no microfone e diga perfil um ou perfil dois.")
+                } else {
+                    updateStatus("Escolha não reconhecida. Aguardando perfil 1 ou perfil 2.")
+                    speakAndListenForProfile("Perfil 1 ou perfil 2?")
+                }
             }
         }
         return
@@ -252,8 +270,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             val profile2Enabled = prefs.getBoolean("profile_2_enabled", false)
             if (profile1Enabled && profile2Enabled) {
                 awaitingWhatsAppProfileChoice = true
+                whatsappProfileChoiceRetries = 0
                 updateStatus("Aguardando escolha: perfil 1 ou perfil 2.")
-                speakAndListenForProfile("Qual WhatsApp você deseja abrir: perfil 1 ou perfil 2?")
+                speakAndListenForProfile("Perfil 1 ou perfil 2?")
             } else if (profile2Enabled && !profile1Enabled) {
                 openWhatsAppProfile2()
             } else {
