@@ -7,6 +7,7 @@ import android.app.KeyguardManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.provider.ContactsContract
 import android.net.Uri
 import android.os.Bundle
 import android.speech.RecognitionListener
@@ -33,6 +34,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var keyguardManager: KeyguardManager
     private var awaitingWhatsAppProfileChoice = false
     private var whatsappProfileChoiceRetries = 0
+    private var pendingDialContactName: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -407,20 +409,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         lower.startsWith("ligue para ") -> {
             val contactName = command.substringAfter("para", "").trim()
 
-            updateStatus("Vou abrir o discador. Confirme o contato e a ligação manualmente.")
-
-            try {
-                startActivity(Intent(Intent.ACTION_DIAL))
-            } catch (_: ActivityNotFoundException) {
-                updateStatus("Não encontrei um aplicativo de telefone disponível.")
-            }
-
-            if (contactName.isNotBlank()) {
-                Toast.makeText(
-                    this,
-                    "Contato solicitado: $contactName. Selecione-o no telefone.",
-                    Toast.LENGTH_LONG
-                ).show()
+            if (contactName.isBlank()) {
+                updateStatus("Diga o nome do contato, por exemplo: ligar para João.")
+                speak("Qual contato você deseja localizar?")
+            } else {
+                openContactDialer(contactName)
             }
         }
 
@@ -652,6 +645,77 @@ private fun openWazeDestination(destination: String) {
         }
     }
 
+    private fun openContactDialer(contactName: String) {
+        if (checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+            pendingDialContactName = contactName
+            requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), 1002)
+            updateStatus("Preciso de permissão para procurar esse contato na sua agenda.")
+            return
+        }
+
+        try {
+            val projection = arrayOf(
+                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                ContactsContract.CommonDataKinds.Phone.NUMBER
+            )
+            val selection = "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"
+            val args = arrayOf("%$contactName%")
+            val matches = mutableListOf<Pair<String, String>>()
+            contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                projection,
+                selection,
+                args,
+                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " ASC"
+            )?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                val numberIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                while (cursor.moveToNext() && matches.size < 10) {
+                    val name = cursor.getString(nameIndex).orEmpty()
+                    val number = cursor.getString(numberIndex).orEmpty()
+                    if (number.isNotBlank()) matches.add(name to number)
+                }
+            }
+
+            when (matches.size) {
+                0 -> {
+                    updateStatus("Não encontrei telefone para '$contactName'. Confira o nome ou abra o discador manualmente.")
+                    speak("Não encontrei esse contato com número de telefone.")
+                }
+                1 -> {
+                    val (name, number) = matches.first()
+                    val intent = Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null))
+                    startActivity(intent)
+                    updateStatus("Contato localizado: $name. O discador está aberto; confira o número e toque para ligar quando quiser.")
+                    speak("Encontrei $name. Confira o número no discador antes de ligar.")
+                }
+                else -> {
+                    val names = matches.map { it.first }.distinct().toTypedArray()
+                    AlertDialog.Builder(this)
+                        .setTitle("Qual contato você deseja ligar?")
+                        .setItems(names) { _, which ->
+                            val selectedName = names[which]
+                            val selected = matches.first { it.first == selectedName }
+                            try {
+                                startActivity(Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", selected.second, null)))
+                                updateStatus("Contato localizado: ${selected.first}. Confirme o número antes de ligar.")
+                            } catch (_: ActivityNotFoundException) {
+                                updateStatus("Não encontrei um aplicativo de telefone disponível.")
+                            }
+                        }
+                        .setNegativeButton("Cancelar", null)
+                        .show()
+                }
+            }
+        } catch (_: SecurityException) {
+            updateStatus("O Android não autorizou a leitura dos contatos. Verifique a permissão nas configurações.")
+        } catch (_: ActivityNotFoundException) {
+            updateStatus("Não encontrei um aplicativo de telefone disponível.")
+        } catch (_: Exception) {
+            updateStatus("Não consegui consultar a agenda. Tente novamente.")
+        }
+    }
+
     private fun showMessageReview(message: String) {
         // Este protótipo ainda não chama uma IA para correção gramatical.
         // A mensagem é mostrada para revisão e só pode ser compartilhada após toque explícito.
@@ -715,6 +779,14 @@ private fun openWazeDestination(destination: String) {
             startListening()
         } else if (requestCode == 1001) {
             updateStatus("Permissão de microfone negada. O comando por voz não pode funcionar.")
+        } else if (requestCode == 1002) {
+            val contactName = pendingDialContactName
+            pendingDialContactName = null
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED && !contactName.isNullOrBlank()) {
+                openContactDialer(contactName)
+            } else {
+                updateStatus("Permissão de contatos negada. Não consigo localizar o contato sem acesso à agenda.")
+            }
         }
     }
 }
