@@ -35,6 +35,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var awaitingWhatsAppProfileChoice = false
     private var whatsappProfileChoiceRetries = 0
     private var pendingDialContactName: String? = null
+    private var awaitingCallConfirmation = false
+    private var pendingCallNumber: String? = null
+    private var pendingCallName: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -289,6 +292,25 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 }
             }
         }
+        return
+    }
+
+    if (awaitingCallConfirmation) {
+        awaitingCallConfirmation = false
+        if (lower.contains("confirmar") || lower == "sim" || lower.contains("pode ligar")) {
+            val number = pendingCallNumber
+            val name = pendingCallName ?: "contato"
+            if (number.isNullOrBlank()) { updateStatus("Não há número pendente."); return }
+            if (checkSelfPermission(Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(Manifest.permission.CALL_PHONE), 1003)
+                updateStatus("Autorize chamadas nas permissões do Android para concluir.")
+                speak("Preciso da permissão de chamadas do Android.")
+            } else {
+                try { startActivity(Intent(Intent.ACTION_CALL, Uri.fromParts("tel", number, null))); updateStatus("Ligação iniciada para " + name); speak("Ligando para " + name) }
+                catch (_: Exception) { startActivity(Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null))); updateStatus("Discador aberto; confirme a chamada no aparelho.") }
+                pendingCallNumber = null; pendingCallName = null
+            }
+        } else { pendingCallNumber = null; pendingCallName = null; updateStatus("Ligação cancelada."); speak("Ligação cancelada.") }
         return
     }
 
@@ -684,10 +706,12 @@ private fun openWazeDestination(destination: String) {
                 }
                 1 -> {
                     val (name, number) = matches.first()
-                    val intent = Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null))
-                    startActivity(intent)
-                    updateStatus("Contato localizado: $name. O discador está aberto; confira o número e toque para ligar quando quiser.")
-                    speak("Encontrei $name. Confira o número no discador antes de ligar.")
+                    pendingCallName = name
+                    pendingCallNumber = number
+                    awaitingCallConfirmation = true
+                    updateStatus("Deseja ligar para " + name + "? Diga confirmar ligação ou cancelar.")
+                    speak("Encontrei " + name + ". Diga confirmar ligação ou cancelar.")
+                    speakAndListenForProfile("Diga confirmar ligação ou cancelar.")
                 }
                 else -> {
                     val names = matches.map { it.first }.distinct().toTypedArray()
@@ -779,6 +803,14 @@ private fun openWazeDestination(destination: String) {
             startListening()
         } else if (requestCode == 1001) {
             updateStatus("Permissão de microfone negada. O comando por voz não pode funcionar.")
+        } else if (requestCode == 1003) {
+            val number = pendingCallNumber
+            val name = pendingCallName ?: "contato"
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED && !number.isNullOrBlank()) {
+                try { startActivity(Intent(Intent.ACTION_CALL, Uri.fromParts("tel", number, null))); updateStatus("Ligação iniciada para " + name); speak("Ligando para " + name) }
+                catch (_: Exception) { updateStatus("Não consegui iniciar a ligação.") }
+                pendingCallNumber = null; pendingCallName = null
+            } else { pendingCallNumber = null; pendingCallName = null; updateStatus("Permissão negada. Nenhuma ligação foi iniciada.") }
         } else if (requestCode == 1002) {
             val contactName = pendingDialContactName
             pendingDialContactName = null
