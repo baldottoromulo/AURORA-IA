@@ -120,6 +120,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     )
 
     private fun startListening() {
+        val settings = getSharedPreferences("aurora_settings", MODE_PRIVATE)
+        if (!settings.getBoolean("voice_commands_enabled", true)) {
+            updateStatus("Comandos por voz desativados nas configurações.")
+            return
+        }
         if (keyguardManager.isKeyguardLocked) {
             updateStatus("Ação bloqueada: desbloqueie o aparelho pelos meios normais do Android.")
             speak("Por segurança, desbloqueie o aparelho antes de usar a Aurora.")
@@ -282,6 +287,37 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 }
             }
         }
+        return
+    }
+
+    val settings = getSharedPreferences("aurora_settings", MODE_PRIVATE)
+    val asksWaze = lower.contains("waze") || lower.contains("rota para") ||
+        lower.contains("rota até") || lower.contains("navegar para") || lower.contains("navegar até") ||
+        lower.contains("ir para casa")
+    val asksWhatsApp = lower.contains("whatsapp") || lower == "vivo" || lower == "tim" ||
+        lower == "pessoal" || lower == "profissional" || lower == "trabalho" ||
+        lower == "primeiro" || lower == "segundo" || lower.contains("perfil 1") || lower.contains("perfil 2")
+    val asksMessage = lower.startsWith("preparar mensagem:") || lower.startsWith("corrigir mensagem:")
+    val asksDialer = lower.startsWith("ligar para ") || lower.startsWith("ligue para ")
+
+    if (asksWaze && !settings.getBoolean("waze_enabled", true)) {
+        updateStatus("A integração com o Waze está desativada nas configurações.")
+        speak("A integração com o Waze está desativada.")
+        return
+    }
+    if (asksWhatsApp && !settings.getBoolean("whatsapp_commands_enabled", true)) {
+        updateStatus("Os comandos do WhatsApp estão desativados nas configurações.")
+        speak("Os comandos do WhatsApp estão desativados.")
+        return
+    }
+    if (asksMessage && !settings.getBoolean("message_review_enabled", true)) {
+        updateStatus("A preparação de mensagens está desativada nas configurações.")
+        speak("A preparação de mensagens está desativada.")
+        return
+    }
+    if (asksDialer && !settings.getBoolean("dialer_enabled", true)) {
+        updateStatus("A abertura do discador está desativada nas configurações.")
+        speak("A abertura do discador está desativada.")
         return
     }
 
