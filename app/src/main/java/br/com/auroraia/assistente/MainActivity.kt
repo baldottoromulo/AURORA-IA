@@ -227,14 +227,17 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         return value.matches(Regex("^(perfil )?(1|um|uma|primeiro|primeira|primeiro perfil|primeira opção|primeira opcao|perfil primeiro|primeiro whatsapp|primeira conta|número um|numero um|opção um|opcao um|opção 1|opcao 1|principal|pessoal)$")) ||
             value.matches(Regex(".*\\b(1|um|uma|primeiro|primeira)\\b.*")) ||
             value.contains("perfil principal") || value.contains("whatsapp pessoal") ||
-            value.contains("primeiro whatsapp") || value.contains("primeira opção") || value.contains("primeira opcao")
+            value.contains("primeiro whatsapp") || value.contains("primeira opção") || value.contains("primeira opcao") ||
+            value == "vivo" || value.contains("whatsapp vivo") || value.contains("whatsapp pessoal")
     }
 
     private fun isProfileTwo(raw: String): Boolean {
         val value = normalizeProfileChoice(raw)
         return value.matches(Regex("^(perfil )?(2|dois|duas|segundo|segunda|segundo perfil|segunda opção|segunda opcao|perfil segundo|segundo whatsapp|segunda conta|número dois|numero dois|opção dois|opcao dois|opção 2|opcao 2)$")) ||
             value.matches(Regex(".*\\b(2|dois|duas|segundo|segunda)\\b.*")) ||
-            value.contains("segundo whatsapp") || value.contains("segunda opção") || value.contains("segunda opcao")
+            value.contains("segundo whatsapp") || value.contains("segunda opção") || value.contains("segunda opcao") ||
+            value == "tim" || value.contains("whatsapp tim") || value.contains("whatsapp profissional") ||
+            value.contains("whatsapp comercial") || value.contains("whatsapp trabalho")
     }
 
     private fun handleCommand(raw: String) {
@@ -267,7 +270,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 // Não encerrar a seleção após uma transcrição ambígua: a opção 1
                 // costuma ser transcrita de forma variável pelo reconhecedor.
                 whatsappProfileChoiceRetries++
-                updateStatus("Não identifiquei a opção. Diga PRIMEIRO para o WhatsApp principal ou SEGUNDO para o outro WhatsApp.")
+                updateStatus("Não identifiquei a opção. Diga PRIMEIRO, PESSOAL ou VIVO para o WhatsApp principal; ou SEGUNDO, PROFISSIONAL ou TIM para o outro WhatsApp.")
                 if (whatsappProfileChoiceRetries >= 3) {
                     whatsappProfileChoiceRetries = 0
                     speakAndListenForProfile("Diga UM para o WhatsApp principal ou DOIS para o segundo WhatsApp.")
