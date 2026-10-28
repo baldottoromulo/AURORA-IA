@@ -13,6 +13,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
@@ -24,11 +25,14 @@ import java.util.Locale
 
 class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var speechRecognizer: SpeechRecognizer? = null
+    private var speechSessionId = 0
     private var tts: TextToSpeech? = null
     private lateinit var statusText: TextView
     private lateinit var commandText: TextView
     private lateinit var listenButton: Button
     private lateinit var keyguardManager: KeyguardManager
+    private var awaitingWhatsAppProfileChoice = false
+    private var whatsappProfileChoiceRetries = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -84,7 +88,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val whatsappSettingsButton = Button(this).apply {
             text = "⚙  ESCOLHER WHATSAPP"
             textSize = 15f
-            setOnClickListener { selectWhatsApp() }
+            setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
         }
 
         val help = TextView(this).apply {
@@ -116,6 +120,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     )
 
     private fun startListening() {
+        val settings = getSharedPreferences("aurora_settings", MODE_PRIVATE)
+        if (!settings.getBoolean("voice_commands_enabled", true)) {
+            updateStatus("Comandos por voz desativados nas configurações.")
+            return
+        }
         if (keyguardManager.isKeyguardLocked) {
             updateStatus("Ação bloqueada: desbloqueie o aparelho pelos meios normais do Android.")
             speak("Por segurança, desbloqueie o aparelho antes de usar a Aurora.")
@@ -132,6 +141,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             return
         }
 
+        // Cada escuta recebe um identificador. Resultados atrasados de uma sessão
+        // anterior não podem sobrescrever a escolha atual nem disparar comandos.
+        speechSessionId++
+        val activeSessionId = speechSessionId
+        speechRecognizer?.cancel()
         speechRecognizer?.destroy()
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
         speechRecognizer?.setRecognitionListener(object : RecognitionListener {
@@ -141,11 +155,48 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() { updateStatus("Processando seu comando…") }
             override fun onError(error: Int) {
-                updateStatus("Não consegui reconhecer a fala. Tente novamente.")
+                if (activeSessionId != speechSessionId) return
+                if (awaitingWhatsAppProfileChoice) {
+                    // O reconhecimento pode encerrar cedo ou falhar por silêncio/ruído.
+                    // Dar várias janelas de escuta sem anunciar falha após apenas duas tentativas.
+                    when {
+                        whatsappProfileChoiceRetries < 3 -> {
+                            whatsappProfileChoiceRetries++
+                            updateStatus("Aguardando sua resposta. Diga perfil 1 ou perfil 2; você pode falar novamente.")
+                            window.decorView.postDelayed({
+                                if (awaitingWhatsAppProfileChoice) startListening()
+                            }, 900L)
+                        }
+                        whatsappProfileChoiceRetries == 3 -> {
+                            whatsappProfileChoiceRetries++
+                            updateStatus("Ainda aguardando. Vou repetir a pergunta e ouvir novamente.")
+                            speakAndListenForProfile("Qual perfil você deseja abrir? Diga perfil um ou perfil dois.")
+                        }
+                        whatsappProfileChoiceRetries < 6 -> {
+                            whatsappProfileChoiceRetries++
+                            updateStatus("Não captei sua resposta. Tente dizer apenas um ou dois.")
+                            window.decorView.postDelayed({
+                                if (awaitingWhatsAppProfileChoice) startListening()
+                            }, 1200L)
+                        }
+                        else -> {
+                            awaitingWhatsAppProfileChoice = false
+                            whatsappProfileChoiceRetries = 0
+                            updateStatus("Não consegui ouvir a escolha após várias tentativas. Toque no microfone para tentar novamente.")
+                            speak("Não consegui ouvir sua escolha. Toque no microfone quando estiver pronto e diga perfil um ou perfil dois.")
+                        }
+                    }
+                } else {
+                    updateStatus("Não consegui reconhecer a fala. Toque no microfone e tente novamente.")
+                }
             }
             override fun onResults(results: Bundle?) {
-                val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    ?.firstOrNull().orEmpty()
+                if (activeSessionId != speechSessionId) return
+                val candidates = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
+                val spoken = if (awaitingWhatsAppProfileChoice) {
+                    candidates.firstOrNull { isProfileOne(it) || isProfileTwo(it) }
+                        ?: candidates.firstOrNull().orEmpty()
+                } else candidates.firstOrNull().orEmpty()
                 commandText.text = "Você disse: $spoken"
                 handleCommand(spoken)
             }
@@ -156,13 +207,45 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR")
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Fale seu comando para a AURORA IA")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, if (awaitingWhatsAppProfileChoice) "Diga primeiro, segundo, pessoal, profissional, Vivo ou TIM" else "Fale seu comando para a AURORA IA")
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 10)
+            // A escolha de perfil precisa de uma janela maior: respostas curtas como
+            // "Vivo", "TIM" e "primeiro" não podem ser cortadas por silêncio precoce.
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, if (awaitingWhatsAppProfileChoice) 2500L else 1500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, if (awaitingWhatsAppProfileChoice) 8000L else 3500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, if (awaitingWhatsAppProfileChoice) 12000L else 6000L)
         }
         try {
             speechRecognizer?.startListening(intent)
         } catch (_: Exception) {
             updateStatus("Não foi possível iniciar o reconhecimento de fala.")
         }
+    }
+
+    private fun normalizeProfileChoice(raw: String): String =
+        raw.lowercase(Locale("pt", "BR"))
+            .replace(Regex("[^\\p{L}\\p{N} ]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+    private fun isProfileOne(raw: String): Boolean {
+        val value = normalizeProfileChoice(raw)
+        return value.matches(Regex("^(perfil )?(1|um|uma|primeiro|primeira|primeiro perfil|primeira opção|primeira opcao|perfil primeiro|primeiro whatsapp|primeira conta|número um|numero um|opção um|opcao um|opção 1|opcao 1|principal|pessoal)$")) ||
+            value.matches(Regex(".*\\b(1|um|uma|primeiro|primeira)\\b.*")) ||
+            value.contains("perfil principal") || value.contains("whatsapp pessoal") ||
+            value.contains("primeiro whatsapp") || value.contains("primeira opção") || value.contains("primeira opcao") ||
+            value == "vivo" || value.contains("whatsapp vivo") || value == "pessoal" || value.contains("perfil pessoal")
+    }
+
+    private fun isProfileTwo(raw: String): Boolean {
+        val value = normalizeProfileChoice(raw)
+        return value.matches(Regex("^(perfil )?(2|dois|duas|segundo|segunda|segundo perfil|segunda opção|segunda opcao|perfil segundo|segundo whatsapp|segunda conta|número dois|numero dois|opção dois|opcao dois|opção 2|opcao 2)$")) ||
+            value.matches(Regex(".*\\b(2|dois|duas|segundo|segunda)\\b.*")) ||
+            value.contains("segundo whatsapp") || value.contains("segunda opção") || value.contains("segunda opcao") ||
+            value == "tim" || value.contains("whatsapp tim") || value == "profissional" ||
+            value == "trabalho" || value.contains("perfil profissional") || value.contains("whatsapp profissional") ||
+            value.contains("whatsapp comercial") || value.contains("whatsapp trabalho")
     }
 
     private fun handleCommand(raw: String) {
@@ -173,6 +256,70 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     val command = raw.trim()
     val lower = command.lowercase(Locale("pt", "BR"))
+
+    if (awaitingWhatsAppProfileChoice) {
+        val choice = normalizeProfileChoice(lower)
+        when {
+            isProfileOne(choice) -> {
+                awaitingWhatsAppProfileChoice = false
+                whatsappProfileChoiceRetries = 0
+                updateStatus("Ok, perfil 1.")
+                speak("Ok, perfil um.")
+                openWhatsApp()
+            }
+            isProfileTwo(choice) -> {
+                awaitingWhatsAppProfileChoice = false
+                whatsappProfileChoiceRetries = 0
+                updateStatus("Ok, perfil 2.")
+                speak("Ok, perfil dois.")
+                openWhatsAppProfile2()
+            }
+            else -> {
+                // Não encerrar a seleção após uma transcrição ambígua: a opção 1
+                // costuma ser transcrita de forma variável pelo reconhecedor.
+                whatsappProfileChoiceRetries++
+                updateStatus("Não identifiquei a opção. Diga PRIMEIRO, PESSOAL ou VIVO para o WhatsApp principal; ou SEGUNDO, PROFISSIONAL ou TIM para o outro WhatsApp.")
+                if (whatsappProfileChoiceRetries >= 3) {
+                    whatsappProfileChoiceRetries = 0
+                    speakAndListenForProfile("Diga UM para o WhatsApp principal ou DOIS para o segundo WhatsApp.")
+                } else {
+                    speakAndListenForProfile("Não entendi. Diga PRIMEIRO ou SEGUNDO.")
+                }
+            }
+        }
+        return
+    }
+
+    val settings = getSharedPreferences("aurora_settings", MODE_PRIVATE)
+    val asksWaze = lower.contains("waze") || lower.contains("rota para") ||
+        lower.contains("rota até") || lower.contains("navegar para") || lower.contains("navegar até") ||
+        lower.contains("ir para casa")
+    val asksWhatsApp = lower.contains("whatsapp") || lower == "vivo" || lower == "tim" ||
+        lower == "pessoal" || lower == "profissional" || lower == "trabalho" ||
+        lower == "primeiro" || lower == "segundo" || lower.contains("perfil 1") || lower.contains("perfil 2")
+    val asksMessage = lower.startsWith("preparar mensagem:") || lower.startsWith("corrigir mensagem:")
+    val asksDialer = lower.startsWith("ligar para ") || lower.startsWith("ligue para ")
+
+    if (asksWaze && !settings.getBoolean("waze_enabled", true)) {
+        updateStatus("A integração com o Waze está desativada nas configurações.")
+        speak("A integração com o Waze está desativada.")
+        return
+    }
+    if (asksWhatsApp && !settings.getBoolean("whatsapp_commands_enabled", true)) {
+        updateStatus("Os comandos do WhatsApp estão desativados nas configurações.")
+        speak("Os comandos do WhatsApp estão desativados.")
+        return
+    }
+    if (asksMessage && !settings.getBoolean("message_review_enabled", true)) {
+        updateStatus("A preparação de mensagens está desativada nas configurações.")
+        speak("A preparação de mensagens está desativada.")
+        return
+    }
+    if (asksDialer && !settings.getBoolean("dialer_enabled", true)) {
+        updateStatus("A abertura do discador está desativada nas configurações.")
+        speak("A abertura do discador está desativada.")
+        return
+    }
 
     when {
         lower.contains("abrir banco") ||
@@ -209,8 +356,40 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             }
         }
 
-        lower.contains("abrir whatsapp") || lower == "whatsapp" -> {
+        (lower.contains("whatsapp") && (lower.contains("tim") || lower.contains("perfil 2") || lower.contains("perfil dois"))) ||
+        lower.contains("whatsapp 2") ||
+        lower.contains("whatsapp dois") ||
+        lower.contains("segundo whatsapp") ||
+        lower.contains("whatsapp secundário") ||
+        lower.contains("whatsapp secundario") ||
+        lower.contains("whatsapp profissional") ||
+        lower.contains("whatsapp comercial") ||
+        (lower.contains("whatsapp") && lower.contains("trabalho")) -> {
+            openWhatsAppProfile2()
+        }
+
+        (lower.contains("whatsapp") && (lower.contains("vivo") || lower.contains("perfil 1") || lower.contains("perfil um"))) ||
+        lower.contains("whatsapp pessoal") ||
+        lower.contains("whatsapp principal") ||
+        lower.contains("whatsapp 1") ||
+        lower.contains("whatsapp um") -> {
             openWhatsApp()
+        }
+
+        lower.contains("abrir whatsapp") || lower == "whatsapp" -> {
+            val prefs = getSharedPreferences("aurora_settings", MODE_PRIVATE)
+            val profile1Enabled = prefs.getBoolean("profile_1_enabled", true)
+            val profile2Enabled = prefs.getBoolean("profile_2_enabled", false)
+            if (profile1Enabled && profile2Enabled) {
+                awaitingWhatsAppProfileChoice = true
+                whatsappProfileChoiceRetries = 0
+                updateStatus("Aguardando escolha: diga UM para o WhatsApp principal ou DOIS para o segundo WhatsApp.")
+                speakAndListenForProfile("Diga UM para o WhatsApp principal ou DOIS para o segundo WhatsApp.")
+            } else if (profile2Enabled && !profile1Enabled) {
+                openWhatsAppProfile2()
+            } else {
+                openWhatsApp()
+            }
         }
 
         lower.startsWith("preparar mensagem:") ||
@@ -375,6 +554,78 @@ private fun openWazeDestination(destination: String) {
             }
             .setNegativeButton("Cancelar", null)
             .show()
+    }
+
+    private fun speakAndListenForProfile(message: String) {
+        // Invalida a escuta anterior antes da fala, evitando que um callback antigo
+        // interprete o silêncio durante a pergunta como uma nova falha.
+        speechSessionId++
+        speechRecognizer?.cancel()
+        speechRecognizer?.destroy()
+        speechRecognizer = null
+        val engine = tts
+        if (engine == null) {
+            updateStatus("Não foi possível falar a pergunta. Toque no microfone e diga 1 ou 2.")
+            return
+        }
+        engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {}
+            override fun onError(utteranceId: String?) {
+                runOnUiThread {
+                    if (awaitingWhatsAppProfileChoice) {
+                        window.decorView.postDelayed({ if (awaitingWhatsAppProfileChoice) startListening() }, 500L)
+                    }
+                }
+            }
+            override fun onDone(utteranceId: String?) {
+                if (utteranceId == "whatsapp-profile-question") {
+                    runOnUiThread {
+                        window.decorView.postDelayed({ if (awaitingWhatsAppProfileChoice) startListening() }, 500L)
+                    }
+                }
+            }
+        })
+        engine.speak(message, TextToSpeech.QUEUE_FLUSH, null, "whatsapp-profile-question")
+    }
+
+    private fun openWhatsAppProfile2() {
+        val prefs = getSharedPreferences("aurora_settings", MODE_PRIVATE)
+        if (!prefs.getBoolean("profile_2_enabled", false)) {
+            updateStatus("O perfil 2 está desativado. Ative-o nas configurações e salve.")
+            speak("O perfil dois está desativado. Ative-o nas configurações.")
+            return
+        }
+
+        val savedComponent = prefs.getString("profile_2_component", null)
+        val savedUser = prefs.getString("profile_2_user_handle", null)
+        if (savedComponent.isNullOrBlank() || savedUser.isNullOrBlank()) {
+            updateStatus("WhatsApp 2 ainda não foi vinculado. Abra as configurações e localize o Dual Messenger.")
+            speak("O WhatsApp dois ainda não foi vinculado. Verifique as configurações.")
+            return
+        }
+
+        val component = android.content.ComponentName.unflattenFromString(savedComponent)
+        if (component == null) {
+            updateStatus("A seleção do WhatsApp 2 está inválida. Localize-o novamente nas configurações.")
+            return
+        }
+
+        try {
+            val launcherApps = getSystemService(LAUNCHER_APPS_SERVICE) as android.content.pm.LauncherApps
+            val targetUser = launcherApps.profiles.firstOrNull { it.toString() == savedUser }
+            if (targetUser == null) {
+                updateStatus("O perfil do WhatsApp 2 não está acessível. Localize-o novamente nas configurações.")
+                speak("Não consegui acessar o perfil dois. Localize-o novamente nas configurações.")
+                return
+            }
+            launcherApps.startMainActivity(component, targetUser, null, null)
+            updateStatus("Comando de voz: abrindo a instalação selecionada do WhatsApp 2.")
+        } catch (_: SecurityException) {
+            updateStatus("O Android/Samsung bloqueou a abertura por voz do WhatsApp 2. Use TESTAR PERFIL 2 nas configurações.")
+            speak("O Android bloqueou a abertura do WhatsApp dois por voz.")
+        } catch (_: Exception) {
+            updateStatus("Não foi possível abrir o WhatsApp 2 por voz. Localize-o novamente nas configurações.")
+        }
     }
 
     private fun openWhatsApp() {
