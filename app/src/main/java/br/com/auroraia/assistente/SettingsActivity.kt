@@ -30,6 +30,11 @@ class SettingsActivity : Activity() {
     private lateinit var profileEnabled: Array<CheckBox>
     private lateinit var profileName: Array<EditText>
     private lateinit var profileNumber: Array<EditText>
+    private lateinit var voiceCommandsEnabled: CheckBox
+    private lateinit var wazeEnabled: CheckBox
+    private lateinit var whatsappEnabled: CheckBox
+    private lateinit var messageReviewEnabled: CheckBox
+    private lateinit var dialerEnabled: CheckBox
     private val profilePackages = arrayOf("com.whatsapp", "com.whatsapp")
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -56,6 +61,24 @@ class SettingsActivity : Activity() {
             setTextColor(0xFF77D8FF.toInt())
             gravity = Gravity.CENTER
         }, matchWrap())
+        root.addView(TextView(this).apply {
+            text = "Painel geral de funções"
+            textSize = 20f
+            setTextColor(0xFFFFFFFF.toInt())
+            setPadding(0, 22, 0, 8)
+        }, matchWrap())
+        root.addView(TextView(this).apply {
+            text = "Ative ou desative cada recurso. As proteções de segurança permanecem obrigatórias."
+            textSize = 14f
+            setTextColor(0xFFB9C8DD.toInt())
+        }, matchWrap())
+
+        voiceCommandsEnabled = addToggle(root, "Comandos por voz", "voice_commands_enabled", true)
+        wazeEnabled = addToggle(root, "Integração com Waze", "waze_enabled", true)
+        whatsappEnabled = addToggle(root, "Comandos do WhatsApp", "whatsapp_commands_enabled", true)
+        messageReviewEnabled = addToggle(root, "Preparar e revisar mensagens", "message_review_enabled", true)
+        dialerEnabled = addToggle(root, "Abrir discador para ligações", "dialer_enabled", true)
+
         root.addView(TextView(this).apply {
             text = "Perfis do WhatsApp"
             textSize = 20f
@@ -133,6 +156,17 @@ class SettingsActivity : Activity() {
         }, matchWrap())
 
         setContentView(ScrollView(this).apply { addView(root) })
+    }
+
+    private fun addToggle(root: LinearLayout, label: String, key: String, defaultValue: Boolean): CheckBox {
+        val toggle = CheckBox(this).apply {
+            text = label
+            setTextColor(0xFFFFFFFF.toInt())
+            isChecked = getSharedPreferences("aurora_settings", MODE_PRIVATE).getBoolean(key, defaultValue)
+            setPadding(0, 8, 0, 8)
+        }
+        root.addView(toggle, matchWrap())
+        return toggle
     }
 
     private fun chooseInstallation(index: Int, button: Button) {
@@ -213,6 +247,11 @@ class SettingsActivity : Activity() {
         }
         val prefs = getSharedPreferences("aurora_settings", MODE_PRIVATE)
         val editor = prefs.edit()
+        editor.putBoolean("voice_commands_enabled", voiceCommandsEnabled.isChecked)
+        editor.putBoolean("waze_enabled", wazeEnabled.isChecked)
+        editor.putBoolean("whatsapp_commands_enabled", whatsappEnabled.isChecked)
+        editor.putBoolean("message_review_enabled", messageReviewEnabled.isChecked)
+        editor.putBoolean("dialer_enabled", dialerEnabled.isChecked)
         repeat(2) { index ->
             editor.putBoolean("profile_${index + 1}_enabled", profileEnabled[index].isChecked)
             editor.putString("profile_${index + 1}_name", profileName[index].text.toString().trim())
