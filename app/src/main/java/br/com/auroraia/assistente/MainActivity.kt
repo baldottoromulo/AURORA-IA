@@ -202,12 +202,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR")
-            putExtra(RecognizerIntent.EXTRA_PROMPT, if (awaitingWhatsAppProfileChoice) "Diga perfil 1 ou perfil 2" else "Fale seu comando para a AURORA IA")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, if (awaitingWhatsAppProfileChoice) "Diga primeiro, segundo, pessoal, profissional, Vivo ou TIM" else "Fale seu comando para a AURORA IA")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 3500L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 6000L)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 10)
+            // A escolha de perfil precisa de uma janela maior: respostas curtas como
+            // "Vivo", "TIM" e "primeiro" não podem ser cortadas por silêncio precoce.
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, if (awaitingWhatsAppProfileChoice) 2500L else 1500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, if (awaitingWhatsAppProfileChoice) 8000L else 3500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, if (awaitingWhatsAppProfileChoice) 12000L else 6000L)
         }
         try {
             speechRecognizer?.startListening(intent)
@@ -228,7 +230,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             value.matches(Regex(".*\\b(1|um|uma|primeiro|primeira)\\b.*")) ||
             value.contains("perfil principal") || value.contains("whatsapp pessoal") ||
             value.contains("primeiro whatsapp") || value.contains("primeira opção") || value.contains("primeira opcao") ||
-            value == "vivo" || value.contains("whatsapp vivo") || value.contains("whatsapp pessoal")
+            value == "vivo" || value.contains("whatsapp vivo") || value == "pessoal" || value.contains("perfil pessoal")
     }
 
     private fun isProfileTwo(raw: String): Boolean {
@@ -236,7 +238,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         return value.matches(Regex("^(perfil )?(2|dois|duas|segundo|segunda|segundo perfil|segunda opção|segunda opcao|perfil segundo|segundo whatsapp|segunda conta|número dois|numero dois|opção dois|opcao dois|opção 2|opcao 2)$")) ||
             value.matches(Regex(".*\\b(2|dois|duas|segundo|segunda)\\b.*")) ||
             value.contains("segundo whatsapp") || value.contains("segunda opção") || value.contains("segunda opcao") ||
-            value == "tim" || value.contains("whatsapp tim") || value.contains("whatsapp profissional") ||
+            value == "tim" || value.contains("whatsapp tim") || value == "profissional" ||
+            value == "trabalho" || value.contains("perfil profissional") || value.contains("whatsapp profissional") ||
             value.contains("whatsapp comercial") || value.contains("whatsapp trabalho")
     }
 
@@ -533,13 +536,15 @@ private fun openWazeDestination(destination: String) {
             override fun onStart(utteranceId: String?) {}
             override fun onError(utteranceId: String?) {
                 runOnUiThread {
-                    if (awaitingWhatsAppProfileChoice) startListening()
+                    if (awaitingWhatsAppProfileChoice) {
+                        window.decorView.postDelayed({ if (awaitingWhatsAppProfileChoice) startListening() }, 500L)
+                    }
                 }
             }
             override fun onDone(utteranceId: String?) {
                 if (utteranceId == "whatsapp-profile-question") {
                     runOnUiThread {
-                        if (awaitingWhatsAppProfileChoice) startListening()
+                        window.decorView.postDelayed({ if (awaitingWhatsAppProfileChoice) startListening() }, 500L)
                     }
                 }
             }
