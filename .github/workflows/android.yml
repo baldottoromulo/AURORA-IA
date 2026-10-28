@@ -3,7 +3,7 @@ name: Construir APK do AURORA IA
 on:
   workflow_dispatch:
   push:
-    branches: [ "main", "fase-2-estrutura-integrada" ]
+    branches: [ "main", "fase-2-estrutura-integrada", "integracao-testes-acessibilidade" ]
   pull_request:
     branches: [ "main" ]
 
