@@ -224,8 +224,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private fun isProfileOne(raw: String): Boolean {
         val value = normalizeProfileChoice(raw)
-        return value.matches(Regex("^(perfil )?(1|um|primeiro|primeira|número um|numero um)$")) ||
-            value.matches(Regex(".*\\b(1|um|primeiro|primeira)\\b.*"))
+        return value.matches(Regex("^(perfil )?(1|um|uma|primeiro|primeira|primeiro perfil|perfil primeiro|número um|numero um|opção um|opcao um|opção 1|opcao 1|principal|pessoal)$")) ||
+            value.matches(Regex(".*\\b(1|um|uma|primeiro|primeira)\\b.*")) ||
+            value.contains("perfil principal") || value.contains("whatsapp pessoal")
     }
 
     private fun isProfileTwo(raw: String): Boolean {
@@ -261,10 +262,16 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 openWhatsAppProfile2()
             }
             else -> {
-                awaitingWhatsAppProfileChoice = false
-                whatsappProfileChoiceRetries = 0
-                updateStatus("Não entendi a escolha. Toque no microfone e diga perfil 1 ou perfil 2.")
-                speak("Não entendi a escolha. Toque no microfone e diga perfil um ou perfil dois.")
+                // Não encerrar a seleção após uma transcrição ambígua: a opção 1
+                // costuma ser transcrita de forma variável pelo reconhecedor.
+                whatsappProfileChoiceRetries++
+                updateStatus("Não identifiquei a opção. Diga UM para o WhatsApp principal ou DOIS para o segundo WhatsApp.")
+                if (whatsappProfileChoiceRetries >= 3) {
+                    whatsappProfileChoiceRetries = 0
+                    speakAndListenForProfile("Diga UM para o WhatsApp principal ou DOIS para o segundo WhatsApp.")
+                } else {
+                    speakAndListenForProfile("Não entendi. Diga apenas UM ou DOIS.")
+                }
             }
         }
         return
@@ -332,8 +339,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             if (profile1Enabled && profile2Enabled) {
                 awaitingWhatsAppProfileChoice = true
                 whatsappProfileChoiceRetries = 0
-                updateStatus("Aguardando escolha: perfil 1 ou perfil 2.")
-                speakAndListenForProfile("Perfil 1 ou perfil 2?")
+                updateStatus("Aguardando escolha: diga UM para o WhatsApp principal ou DOIS para o segundo WhatsApp.")
+                speakAndListenForProfile("Diga UM para o WhatsApp principal ou DOIS para o segundo WhatsApp.")
             } else if (profile2Enabled && !profile1Enabled) {
                 openWhatsAppProfile2()
             } else {
