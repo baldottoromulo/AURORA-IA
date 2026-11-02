@@ -232,7 +232,16 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR")
-            putExtra(RecognizerIntent.EXTRA_PROMPT, if (awaitingWhatsAppProfileChoice) "Diga primeiro, segundo, pessoal, profissional, Vivo ou TIM" else "Fale seu comando para a AURORA IA")
+            putExtra(
+                RecognizerIntent.EXTRA_PROMPT,
+                when {
+                    awaitingWhatsAppProfileChoice -> "Diga perfil um ou perfil dois"
+                    awaitingCallChoice -> "Diga apenas o número da opção ou a cor correspondente"
+                    awaitingPhoneChoice -> "Diga padrão ou o número da opção"
+                    awaitingCallConfirmation -> "Diga sim ou não"
+                    else -> "Fale seu comando para a AURORA IA"
+                }
+            )
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 10)
             // A escolha de perfil precisa de uma janela maior: respostas curtas como
@@ -257,15 +266,33 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private fun resolveListChoice(raw: String, size: Int): Int? {
         val value = normalizeVoiceChoice(raw)
+        if (value.isBlank()) return null
         if (value.contains("cancelar") || value.contains("nenhuma")) return -1
-        val colors = listOf("azul", "amarelo", "verde", "vermelho", "roxo", "laranja", "rosa", "marrom", "cinza", "preto")
-        val colorIndex = colors.indexOfFirst { Regex("\\b${it}\\b").containsMatchIn(value) }
-        if (colorIndex >= 0 && colorIndex < size) return colorIndex
-        val numberWords = listOf(
-            setOf("1", "um", "uma", "primeiro", "primeira"),
-            setOf("2", "dois", "duas", "segundo", "segunda"),
-            setOf("3", "tres", "terceiro", "terceira"),
-            setOf("4", "quatro", "quarto", "quarta"),
+
+        // Aceita a cor isolada ou dentro de frases como "opção azul".
+        val colors = listOf(
+            setOf("azul", "azuis"),
+            setOf("amarelo", "amarela"),
+            setOf("verde", "verdes"),
+            setOf("vermelho", "vermelha"),
+            setOf("roxo", "roxa"),
+            setOf("laranja"),
+            setOf("rosa"),
+            setOf("marrom"),
+            setOf("cinza"),
+            setOf("preto", "preta")
+        )
+        colors.forEachIndexed { index, variants ->
+            if (index < size && variants.any { Regex("\\b${Regex.escape(it)}\\b").containsMatchIn(value) }) return index
+        }
+
+        // Aceita dígitos, números por extenso e ordinais, mesmo acompanhados de
+        // "opção", "número", "alternativa" ou "contato".
+        val numberVariants = listOf(
+            setOf("1", "um", "uma", "primeiro", "primeira", "primeira opcao", "opcao um", "numero um"),
+            setOf("2", "dois", "duas", "segundo", "segunda", "segunda opcao", "opcao dois", "numero dois"),
+            setOf("3", "tres", "terceiro", "terceira", "terceira opcao", "opcao tres", "numero tres"),
+            setOf("4", "quatro", "quarto", "quarta", "quarta opcao", "opcao quatro", "numero quatro"),
             setOf("5", "cinco", "quinto", "quinta"),
             setOf("6", "seis", "sexto", "sexta"),
             setOf("7", "sete", "setimo", "setima"),
@@ -273,9 +300,18 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setOf("9", "nove", "nono", "nona"),
             setOf("10", "dez", "decimo", "decima")
         )
-        numberWords.forEachIndexed { index, words ->
-            if (index < size && words.any { Regex("\\b${Regex.escape(it)}\\b").containsMatchIn(value) }) return index
+        numberVariants.forEachIndexed { index, variants ->
+            if (index < size && variants.any { variant ->
+                if (variant.contains(" ")) value.contains(variant)
+                else Regex("\\b${Regex.escape(variant)}\\b").containsMatchIn(value)
+            }) return index
         }
+
+        // Alguns reconhecedores retornam "dois" como "2ª"/"2o" ou frases curtas.
+        val compact = value.replace(" ", "")
+        val digit = Regex("^(?:opcao|numero|alternativa)?(\\d{1,2})(?:a|o|º|ª)?$").matchEntire(compact)
+            ?.groupValues?.get(1)?.toIntOrNull()
+        if (digit != null && digit in 1..size) return digit - 1
         return null
     }
 
