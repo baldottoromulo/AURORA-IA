@@ -198,6 +198,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                             speak("Não consegui ouvir sua escolha. Toque no microfone quando estiver pronto e diga perfil um ou perfil dois.")
                         }
                     }
+                } else if (awaitingCallChoice || awaitingPhoneChoice || awaitingCallConfirmation) {
+                    // Não cancela a etapa por silêncio ou falha momentânea do reconhecedor.
+                    updateStatus("Continuo aguardando sua resposta. Pode falar novamente.")
+                    window.decorView.postDelayed({
+                        if (awaitingCallChoice || awaitingPhoneChoice || awaitingCallConfirmation) startListening()
+                    }, 650L)
                 } else {
                     updateStatus("Não consegui reconhecer a fala. Toque no microfone e tente novamente.")
                 }
@@ -675,6 +681,9 @@ private fun openWazeDestination(destination: String) {
             .show()
     }
 
+    private fun hasPendingVoiceChoice(): Boolean =
+        awaitingWhatsAppProfileChoice || awaitingCallConfirmation || awaitingCallChoice || awaitingPhoneChoice
+
     private fun speakAndListenForProfile(message: String) {
         // Invalida a escuta anterior antes da fala, evitando que um callback antigo
         // interprete o silêncio durante a pergunta como uma nova falha.
@@ -691,15 +700,16 @@ private fun openWazeDestination(destination: String) {
             override fun onStart(utteranceId: String?) {}
             override fun onError(utteranceId: String?) {
                 runOnUiThread {
-                    if (awaitingWhatsAppProfileChoice || awaitingCallConfirmation || awaitingCallChoice || awaitingPhoneChoice) {
-                        window.decorView.postDelayed({ if (awaitingWhatsAppProfileChoice || awaitingCallConfirmation || awaitingCallChoice || awaitingPhoneChoice) startListening() }, 500L)
+                    if (hasPendingVoiceChoice()) {
+                        window.decorView.postDelayed({ if (hasPendingVoiceChoice()) startListening() }, 350L)
                     }
                 }
             }
             override fun onDone(utteranceId: String?) {
-                if (utteranceId == "whatsapp-profile-question") {
-                    runOnUiThread {
-                        window.decorView.postDelayed({ if (awaitingWhatsAppProfileChoice || awaitingCallConfirmation || awaitingCallChoice || awaitingPhoneChoice) startListening() }, 500L)
+                runOnUiThread {
+                    // O microfone é reativado automaticamente assim que a fala termina.
+                    if (hasPendingVoiceChoice()) {
+                        window.decorView.postDelayed({ if (hasPendingVoiceChoice()) startListening() }, 250L)
                     }
                 }
             }
