@@ -743,9 +743,10 @@ private fun openWazeDestination(destination: String) {
                     callChoices = matches.distinctBy { it.first to it.second }.take(4)
                     awaitingCallChoice = true
                     val colors = listOf("vermelho", "azul", "verde", "amarelo")
-                    val spoken = callChoices.mapIndexed { index, item -> "Opção ${index + 1}, ${colors[index]}, ${item.first}" }.joinToString(". ")
-                    updateStatus("Escolha por voz: número, cor ou nome completo.")
-                    speakAndListenForProfile("Encontrei contatos semelhantes. " + spoken + ". Diga o número, a cor ou o nome completo.")
+                    val spoken = callChoices.mapIndexed { index, item -> "Opção ${index + 1}, cor ${colors[index]}, ${item.first}, telefone ${item.second}" }.joinToString(". ")
+                    val visibleChoices = callChoices.mapIndexed { index, item -> "${index + 1} — ${colors[index].uppercase(Locale("pt", "BR"))} — ${item.first} — ${item.second}" }.joinToString("\\n")
+                    updateStatus("CONTATOS ENCONTRADOS — confira o nome e o número e escolha por voz:\\n" + visibleChoices)
+                    speakAndListenForProfile("Encontrei contatos semelhantes. Veja os nomes, números e cores na tela e escolha dizendo o número, a cor ou o nome completo. " + spoken)
                 }
             }
         } catch (_: SecurityException) {
