@@ -172,27 +172,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             override fun onEndOfSpeech() { updateStatus("Processando seu comando…") }
             override fun onError(error: Int) {
                 if (activeSessionId != speechSessionId) return
-                if (awaitingMessageDictation) {
-        val message = raw.trim()
-        if (message.isBlank() || message.equals("cancelar", true)) {
-            awaitingMessageDictation = false
-            pendingMessageRecipientName = null
-            pendingMessageRecipientNumber = null
-            updateStatus("Preparação da mensagem cancelada.")
-            speak("Mensagem cancelada.")
-        } else {
-            awaitingMessageDictation = false
-            showWhatsAppMessageReview(
-                pendingMessageRecipientName.orEmpty(),
-                pendingMessageRecipientNumber.orEmpty(),
-                pendingMessageWhatsAppPackage ?: "com.whatsapp",
-                message
-            )
-        }
-        return
-    }
-
-    if (awaitingWhatsAppProfileChoice) {
+                if (awaitingWhatsAppProfileChoice) {
                     // O reconhecimento pode encerrar cedo ou falhar por silêncio/ruído.
                     // Dar várias janelas de escuta sem anunciar falha após apenas duas tentativas.
                     when {
@@ -226,7 +206,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     // Não cancela a etapa por silêncio ou falha momentânea do reconhecedor.
                     updateStatus("Continuo aguardando sua resposta. Pode falar novamente.")
                     window.decorView.postDelayed({
-                        if (awaitingCallChoice || awaitingPhoneChoice || awaitingCallConfirmation) startListening()
+                        if (awaitingCallChoice || awaitingPhoneChoice || awaitingMessageDictation || awaitingCallConfirmation) startListening()
                     }, 650L)
                 } else {
                     updateStatus("Não consegui reconhecer a fala. Toque no microfone e tente novamente.")
@@ -389,6 +369,26 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     val command = raw.trim()
     val lower = command.lowercase(Locale("pt", "BR"))
+
+    if (awaitingMessageDictation) {
+        val message = raw.trim()
+        awaitingMessageDictation = false
+        if (message.isBlank() || message.equals("cancelar", true)) {
+            pendingMessageRecipientName = null
+            pendingMessageRecipientNumber = null
+            pendingMessageWhatsAppPackage = null
+            updateStatus("Preparação da mensagem cancelada.")
+            speak("Mensagem cancelada.")
+        } else {
+            showWhatsAppMessageReview(
+                pendingMessageRecipientName.orEmpty(),
+                pendingMessageRecipientNumber.orEmpty(),
+                pendingMessageWhatsAppPackage ?: "com.whatsapp",
+                message
+            )
+        }
+        return
+    }
 
     if (awaitingWhatsAppProfileChoice) {
         val choice = normalizeProfileChoice(lower)
@@ -753,7 +753,7 @@ private fun openWazeDestination(destination: String) {
     }
 
     private fun hasPendingVoiceChoice(): Boolean =
-        awaitingWhatsAppProfileChoice || awaitingCallConfirmation || awaitingCallChoice || awaitingPhoneChoice
+        awaitingWhatsAppProfileChoice || awaitingCallConfirmation || awaitingCallChoice || awaitingPhoneChoice || awaitingMessageDictation
 
     private fun speakAndListenForProfile(message: String) {
         // Invalida a escuta anterior antes da fala, evitando que um callback antigo
@@ -988,8 +988,9 @@ private fun openWazeDestination(destination: String) {
 
     private fun beginWhatsAppMessage(recipient: String, packageName: String) {
         if (checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
-            pendingDialContactName = recipient
-            requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), 1002)
+            pendingMessageRecipientName = recipient
+            pendingMessageWhatsAppPackage = packageName
+            requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), 1004)
             updateStatus("Preciso de acesso aos contatos para localizar $recipient.")
             speak("Preciso de permissão para consultar seus contatos.")
             return
@@ -1147,6 +1148,17 @@ private fun openWazeDestination(destination: String) {
                 openContactDialer(contactName)
             } else {
                 updateStatus("Permissão de contatos negada. Não consigo localizar o contato sem acesso à agenda.")
+            }
+        } else if (requestCode == 1004) {
+            val recipient = pendingMessageRecipientName
+            val packageName = pendingMessageWhatsAppPackage ?: "com.whatsapp"
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED && !recipient.isNullOrBlank()) {
+                beginWhatsAppMessage(recipient, packageName)
+            } else {
+                pendingMessageRecipientName = null
+                pendingMessageWhatsAppPackage = null
+                updateStatus("Permissão de contatos negada. Nenhuma mensagem foi preparada.")
+                speak("Sem permissão para consultar os contatos, não posso preparar a mensagem.")
             }
         }
     }
