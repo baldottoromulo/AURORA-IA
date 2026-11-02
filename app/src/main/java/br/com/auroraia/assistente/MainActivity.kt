@@ -742,11 +742,11 @@ private fun openWazeDestination(destination: String) {
                 else -> {
                     callChoices = matches.distinctBy { it.first to it.second }.take(4)
                     awaitingCallChoice = true
-                    val colors = listOf("vermelho", "azul", "verde", "amarelo")
-                    val spoken = callChoices.mapIndexed { index, item -> "Opção ${index + 1}, cor ${colors[index]}, ${item.first}, telefone ${item.second}" }.joinToString(". ")
-                    val visibleChoices = callChoices.mapIndexed { index, item -> "${index + 1} — ${colors[index].uppercase(Locale("pt", "BR"))} — ${item.first} — ${item.second}" }.joinToString("\\n")
-                    updateStatus("CONTATOS ENCONTRADOS — confira o nome e o número e escolha por voz:\\n" + visibleChoices)
-                    speakAndListenForProfile("Encontrei contatos semelhantes. Veja os nomes, números e cores na tela e escolha dizendo o número, a cor ou o nome completo. " + spoken)
+                    val colors = listOf("azul", "amarelo", "verde", "vermelho")
+                    val spoken = callChoices.mapIndexed { index, item -> "Opção ${index + 1}, ${item.first}, cor ${colors[index]}" }.joinToString(". ")
+                    val visibleChoices = callChoices.mapIndexed { index, item -> "${index + 1}) ${item.first} (${colors[index]})" }.joinToString("\n")
+                    updateStatus("CONTATOS ENCONTRADOS — escolha pelo número, nome completo ou cor:\n" + visibleChoices)
+                    speakAndListenForProfile("Encontrei contatos semelhantes. Confira as opções na tela e escolha dizendo o número, o nome completo ou a cor. " + spoken)
                 }
             }
         } catch (_: SecurityException) {
