@@ -24,6 +24,9 @@ import android.widget.TextView
 import android.widget.Toast
 import java.util.Locale
 
+private data class ContactPhone(val number: String, val label: String, val isPrimary: Boolean)
+private data class ContactChoice(val name: String, val phones: List<ContactPhone>)
+
 class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var speechRecognizer: SpeechRecognizer? = null
     private var speechSessionId = 0
@@ -39,7 +42,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var pendingCallNumber: String? = null
     private var pendingCallName: String? = null
     private var awaitingCallChoice = false
-    private var callChoices: List<Pair<String, String>> = emptyList()
+    private var callChoices: List<ContactChoice> = emptyList()
+    private var awaitingPhoneChoice = false
+    private var pendingPhoneChoices: List<ContactPhone> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -298,7 +303,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     if (awaitingCallChoice) {
-        val choiceColors = listOf("azul", "amarelo", "verde", "vermelho", "roxo", "laranja", "rosa", "marrom", "cinza", "preto")
         val normalizedChoice = lower.replace(Regex("[^\\p{L}\\p{N} ]"), " ").replace(Regex("\\s+"), " ").trim()
         val choice = when {
             normalizedChoice.contains("cancelar") || normalizedChoice.contains("nenhuma") -> -1
@@ -306,24 +310,61 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             normalizedChoice.matches(Regex(".*\\b(segundo|segunda|dois|duas|2)\\b.*")) -> 1
             normalizedChoice.matches(Regex(".*\\b(terceiro|terceira|tres|3)\\b.*")) -> 2
             normalizedChoice.matches(Regex(".*\\b(quarto|quarta|quatro|4)\\b.*")) -> 3
-            choiceColors.any { normalizedChoice == it } -> choiceColors.indexOf(normalizedChoice)
             else -> callChoices.indexOfFirst {
-                normalizedChoice == it.first.lowercase(Locale("pt", "BR"))
+                normalizedChoice == it.name.lowercase(Locale("pt", "BR"))
                     .replace(Regex("[^\\p{L}\\p{N} ]"), " ")
                     .replace(Regex("\\s+"), " ").trim()
             }
         }
         when {
-            choice == -1 -> { awaitingCallChoice = false; callChoices = emptyList(); updateStatus("Seleção cancelada."); speak("Seleção cancelada.") }
+            choice == -1 -> {
+                awaitingCallChoice = false
+                callChoices = emptyList()
+                updateStatus("Seleção cancelada.")
+                speak("Seleção cancelada.")
+            }
             choice in callChoices.indices -> {
                 awaitingCallChoice = false
-                val selected = callChoices[choice]
-                pendingCallName = selected.first; pendingCallNumber = selected.second
-                awaitingCallConfirmation = true
-                updateStatus("Você escolheu " + selected.first + ". Deseja ligar? Responda sim ou não.")
-                speakAndListenForProfile("Você escolheu " + selected.first + ". Deseja ligar? Diga sim ou não.")
+                offerPhoneChoices(callChoices[choice])
             }
-            else -> speakAndListenForProfile("Não identifiquei a opção. Diga o número, a cor ou o nome completo.")
+            else -> speakAndListenForProfile("Não identifiquei o contato. Diga o número da opção ou o nome completo.")
+        }
+        return
+    }
+
+    if (awaitingPhoneChoice) {
+        val normalizedChoice = lower.replace(Regex("[^\\p{L}\\p{N} ]"), " ").replace(Regex("\\s+"), " ").trim()
+        val selectedIndex = when {
+            normalizedChoice.contains("cancelar") -> -1
+            normalizedChoice.contains("padrão") || normalizedChoice.contains("padrao") ||
+                normalizedChoice.contains("principal") || normalizedChoice.contains("preferencial") ->
+                pendingPhoneChoices.indexOfFirst { it.isPrimary }.takeIf { it >= 0 } ?: 0
+            normalizedChoice.matches(Regex(".*\\b(primeiro|primeira|um|uma|1)\\b.*")) -> 0
+            normalizedChoice.matches(Regex(".*\\b(segundo|segunda|dois|duas|2)\\b.*")) -> 1
+            normalizedChoice.matches(Regex(".*\\b(terceiro|terceira|tres|3)\\b.*")) -> 2
+            normalizedChoice.matches(Regex(".*\\b(quarto|quarta|quatro|4)\\b.*")) -> 3
+            else -> pendingPhoneChoices.indexOfFirst {
+                normalizedChoice == it.label.lowercase(Locale("pt", "BR"))
+            }
+        }
+        when {
+            selectedIndex == -1 -> {
+                awaitingPhoneChoice = false
+                pendingPhoneChoices = emptyList()
+                updateStatus("Escolha do telefone cancelada.")
+                speak("Escolha do telefone cancelada.")
+            }
+            selectedIndex in pendingPhoneChoices.indices -> {
+                val selected = pendingPhoneChoices[selectedIndex]
+                awaitingPhoneChoice = false
+                pendingPhoneChoices = emptyList()
+                pendingCallNumber = selected.number
+                awaitingCallConfirmation = true
+                val contact = pendingCallName ?: "contato"
+                updateStatus("Telefone selecionado para $contact: ${selected.label}. Deseja ligar? Responda sim ou não.")
+                speakAndListenForProfile("Você escolheu o telefone ${selected.label} de $contact. Deseja ligar? Diga sim ou não.")
+            }
+            else -> speakAndListenForProfile("Não identifiquei o telefone. Diga padrão, primeiro, segundo ou o tipo do número.")
         }
         return
     }
@@ -709,7 +750,7 @@ private fun openWazeDestination(destination: String) {
         }
 
         try {
-            // Contacts retorna uma linha por contato, não uma linha por telefone.
+            // Pesquisa todos os contatos pelo trecho do nome, sem limitar a quantidade.
             val projection = arrayOf(
                 ContactsContract.Contacts._ID,
                 ContactsContract.Contacts.DISPLAY_NAME,
@@ -717,7 +758,7 @@ private fun openWazeDestination(destination: String) {
             )
             val selection = "${ContactsContract.Contacts.DISPLAY_NAME} LIKE ?"
             val args = arrayOf("%${contactName.trim()}%")
-            val found = linkedMapOf<String, Pair<String, String>>()
+            val found = linkedMapOf<String, ContactChoice>()
 
             contentResolver.query(
                 ContactsContract.Contacts.CONTENT_URI,
@@ -733,25 +774,40 @@ private fun openWazeDestination(destination: String) {
                 while (cursor.moveToNext()) {
                     val contactId = cursor.getString(idIndex).orEmpty()
                     val name = cursor.getString(nameIndex).orEmpty().trim()
-                    val hasPhone = cursor.getInt(hasPhoneIndex) > 0
-                    if (contactId.isBlank() || name.isBlank() || !hasPhone) continue
+                    if (contactId.isBlank() || name.isBlank() || cursor.getInt(hasPhoneIndex) <= 0) continue
 
-                    // Recupera um número apenas para iniciar a chamada; nunca o exibe.
-                    val phone = contentResolver.query(
+                    val phones = mutableListOf<ContactPhone>()
+                    contentResolver.query(
                         ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                        arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                        arrayOf(
+                            ContactsContract.CommonDataKinds.Phone.NUMBER,
+                            ContactsContract.CommonDataKinds.Phone.TYPE,
+                            ContactsContract.CommonDataKinds.Phone.LABEL,
+                            ContactsContract.CommonDataKinds.Phone.IS_PRIMARY
+                        ),
                         "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
                         arrayOf(contactId),
                         ContactsContract.CommonDataKinds.Phone.IS_PRIMARY + " DESC, " +
                             ContactsContract.CommonDataKinds.Phone._ID + " ASC"
                     )?.use { phoneCursor ->
-                        if (phoneCursor.moveToFirst()) phoneCursor.getString(0).orEmpty() else ""
-                    }.orEmpty()
+                        while (phoneCursor.moveToNext()) {
+                            val number = phoneCursor.getString(0).orEmpty().trim()
+                            if (number.isBlank()) continue
+                            val type = phoneCursor.getInt(1)
+                            val customLabel = phoneCursor.getString(2)
+                            val label = ContactsContract.CommonDataKinds.Phone.getTypeLabel(
+                                resources, type, customLabel
+                            ).toString().ifBlank { "Telefone" }
+                            val isPrimary = phoneCursor.getInt(3) != 0
+                            if (phones.none { it.number == number }) {
+                                phones.add(ContactPhone(number, label, isPrimary))
+                            }
+                        }
+                    }
 
-                    if (phone.isNotBlank()) {
+                    if (phones.isNotEmpty()) {
                         val key = name.lowercase(Locale("pt", "BR")).replace(Regex("\\s+"), " ").trim()
-                        // Uma única opção por nome, mesmo que a agenda tenha vários telefones.
-                        if (!found.containsKey(key)) found[key] = name to phone
+                        if (!found.containsKey(key)) found[key] = ContactChoice(name, phones)
                     }
                 }
             }
@@ -762,22 +818,15 @@ private fun openWazeDestination(destination: String) {
                     updateStatus("Não encontrei contatos com telefone cujo nome contenha '$contactName'.")
                     speak("Não encontrei contatos com esse nome.")
                 }
-                1 -> {
-                    val (name, number) = matches.first()
-                    pendingCallName = name
-                    pendingCallNumber = number
-                    awaitingCallConfirmation = true
-                    updateStatus("Deseja ligar para $name? Responda sim ou não.")
-                    speakAndListenForProfile("Encontrei $name. Deseja ligar? Diga sim ou não.")
-                }
+                1 -> offerPhoneChoices(matches.first())
                 else -> {
                     callChoices = matches
                     awaitingCallChoice = true
                     val colors = listOf("azul", "amarelo", "verde", "vermelho", "roxo", "laranja", "rosa", "marrom", "cinza", "preto")
                     val visibleChoices = callChoices.mapIndexed { index, item ->
                         val color = colors.getOrNull(index)
-                        if (color != null) "${index + 1}) ${item.first} ($color)"
-                        else "${index + 1}) ${item.first}"
+                        if (color != null) "${index + 1}) ${item.name} ($color)"
+                        else "${index + 1}) ${item.name}"
                     }.joinToString("\n")
                     updateStatus(
                         "ENCONTREI ${callChoices.size} CONTATOS COM '$contactName'. " +
@@ -797,6 +846,34 @@ private fun openWazeDestination(destination: String) {
             updateStatus("Não consegui consultar a agenda. Tente novamente.")
         }
     }
+
+    private fun offerPhoneChoices(contact: ContactChoice) {
+        pendingCallName = contact.name
+        val phones = contact.phones
+        if (phones.size == 1) {
+            pendingCallNumber = phones.first().number
+            awaitingCallConfirmation = true
+            updateStatus("Encontrei ${contact.name}. Deseja ligar? Responda sim ou não.")
+            speakAndListenForProfile("Encontrei ${contact.name}. Deseja ligar? Diga sim ou não.")
+            return
+        }
+
+        pendingPhoneChoices = phones
+        awaitingPhoneChoice = true
+        val defaultIndex = phones.indexOfFirst { it.isPrimary }.takeIf { it >= 0 } ?: 0
+        val lines = phones.mapIndexed { index, phone ->
+            val defaultText = if (index == defaultIndex) " — padrão" else ""
+            "${index + 1}) ${phone.label}$defaultText"
+        }.joinToString("\n")
+        updateStatus(
+            "${contact.name} possui ${phones.size} números. Escolha qual deseja usar; os números não serão exibidos:\n$lines"
+        )
+        speakAndListenForProfile(
+            "${contact.name} possui ${phones.size} telefones. " +
+                "Diga padrão para o número principal, ou escolha pelo número da opção ou tipo do telefone."
+        )
+    }
+
 
     private fun showMessageReview(message: String) {
         // Este protótipo ainda não chama uma IA para correção gramatical.
