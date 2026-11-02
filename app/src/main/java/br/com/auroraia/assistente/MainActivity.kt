@@ -45,6 +45,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var callChoices: List<ContactChoice> = emptyList()
     private var awaitingPhoneChoice = false
     private var pendingPhoneChoices: List<ContactPhone> = emptyList()
+    private var awaitingMessageDictation = false
+    private var pendingMessageRecipientName: String? = null
+    private var pendingMessageRecipientNumber: String? = null
+    private var pendingMessageWhatsAppPackage: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -168,7 +172,27 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             override fun onEndOfSpeech() { updateStatus("Processando seu comando…") }
             override fun onError(error: Int) {
                 if (activeSessionId != speechSessionId) return
-                if (awaitingWhatsAppProfileChoice) {
+                if (awaitingMessageDictation) {
+        val message = raw.trim()
+        if (message.isBlank() || message.equals("cancelar", true)) {
+            awaitingMessageDictation = false
+            pendingMessageRecipientName = null
+            pendingMessageRecipientNumber = null
+            updateStatus("Preparação da mensagem cancelada.")
+            speak("Mensagem cancelada.")
+        } else {
+            awaitingMessageDictation = false
+            showWhatsAppMessageReview(
+                pendingMessageRecipientName.orEmpty(),
+                pendingMessageRecipientNumber.orEmpty(),
+                pendingMessageWhatsAppPackage ?: "com.whatsapp",
+                message
+            )
+        }
+        return
+    }
+
+    if (awaitingWhatsAppProfileChoice) {
                     // O reconhecimento pode encerrar cedo ou falhar por silêncio/ruído.
                     // Dar várias janelas de escuta sem anunciar falha após apenas duas tentativas.
                     when {
@@ -198,7 +222,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                             speak("Não consegui ouvir sua escolha. Toque no microfone quando estiver pronto e diga perfil um ou perfil dois.")
                         }
                     }
-                } else if (awaitingCallChoice || awaitingPhoneChoice || awaitingCallConfirmation) {
+                } else if (awaitingCallChoice || awaitingPhoneChoice || awaitingMessageDictation || awaitingCallConfirmation) {
                     // Não cancela a etapa por silêncio ou falha momentânea do reconhecedor.
                     updateStatus("Continuo aguardando sua resposta. Pode falar novamente.")
                     window.decorView.postDelayed({
@@ -524,6 +548,17 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             } else {
                 openWazeDestination(destination)
             }
+        }
+
+        lower.contains("mensagem") && lower.contains("whatsapp") && lower.contains("para ") -> {
+            val recipient = command.substringAfter("para", "").trim()
+                .replace(Regex("(?i)\\s+(por favor|agora)$"), "").trim()
+            if (recipient.isBlank()) {
+                updateStatus("Diga o nome do contato para a mensagem.")
+                speak("Para quem você deseja enviar a mensagem?")
+                return
+            }
+            beginWhatsAppMessage(recipient, if (lower.contains("profissional") || lower.contains("comercial") || lower.contains("segundo")) "com.whatsapp.w4b" else "com.whatsapp")
         }
 
         (lower.contains("whatsapp") && (lower.contains("tim") || lower.contains("perfil 2") || lower.contains("perfil dois"))) ||
@@ -950,6 +985,89 @@ private fun openWazeDestination(destination: String) {
         )
     }
 
+
+    private fun beginWhatsAppMessage(recipient: String, packageName: String) {
+        if (checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+            pendingDialContactName = recipient
+            requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), 1002)
+            updateStatus("Preciso de acesso aos contatos para localizar $recipient.")
+            speak("Preciso de permissão para consultar seus contatos.")
+            return
+        }
+        try {
+            val projection = arrayOf(ContactsContract.Contacts._ID, ContactsContract.Contacts.DISPLAY_NAME)
+            val matches = mutableListOf<Pair<String, String>>()
+            contentResolver.query(
+                ContactsContract.Contacts.CONTENT_URI, projection,
+                "${ContactsContract.Contacts.DISPLAY_NAME} LIKE ?",
+                arrayOf("%$recipient%"),
+                ContactsContract.Contacts.DISPLAY_NAME + " COLLATE NOCASE ASC"
+            )?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val id = cursor.getString(0).orEmpty()
+                    val name = cursor.getString(1).orEmpty()
+                    val number = contentResolver.query(
+                        ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                        arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                        "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
+                        arrayOf(id), null
+                    )?.use { phones -> if (phones.moveToFirst()) phones.getString(0).orEmpty() else "" }.orEmpty()
+                    if (number.isNotBlank() && matches.none { it.first.equals(name, true) }) matches.add(name to number)
+                }
+            }
+            if (matches.isEmpty()) {
+                updateStatus("Não encontrei $recipient com telefone na agenda. Nenhum WhatsApp foi aberto.")
+                speak("Não encontrei esse contato na sua agenda.")
+                return
+            }
+            if (matches.size > 1) {
+                updateStatus("Encontrei mais de um contato com esse nome. Por enquanto, diga o nome mais completo para identificar o destinatário.")
+                speak("Encontrei mais de um contato. Diga o nome completo para identificar o destinatário.")
+                return
+            }
+            val (name, number) = matches.first()
+            pendingMessageRecipientName = name
+            pendingMessageRecipientNumber = number
+            pendingMessageWhatsAppPackage = packageName
+            awaitingMessageDictation = true
+            updateStatus("Destinatário: $name. Dite agora o texto da mensagem. A mensagem será apresentada para revisão antes de abrir o WhatsApp.")
+            speakAndListenForProfile("Encontrei $name. Dite agora o texto da mensagem. Ao terminar, vou mostrar o texto para sua revisão.")
+        } catch (_: Exception) {
+            updateStatus("Não consegui consultar o contato. Verifique a permissão de contatos.")
+            speak("Não consegui consultar seus contatos.")
+        }
+    }
+
+    private fun showWhatsAppMessageReview(name: String, rawNumber: String, packageName: String, message: String) {
+        val preview = android.widget.EditText(this).apply {
+            setText(message)
+            minLines = 3
+            textSize = 17f
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Mensagem para $name")
+            .setMessage("Confira e edite o texto. A AURORA não enviará automaticamente.")
+            .setView(preview)
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Abrir conversa") { _, _ ->
+                val digits = rawNumber.filter { it.isDigit() }
+                val international = if (digits.startsWith("55")) digits else "55$digits"
+                val url = Uri.parse("https://wa.me/$international?text=" + Uri.encode(preview.text.toString()))
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW, url).setPackage(packageName)
+                    startActivity(intent)
+                    updateStatus("Conversa de $name aberta com o texto preenchido. Revise e toque em Enviar no WhatsApp.")
+                } catch (_: Exception) {
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, url))
+                        updateStatus("Conversa preparada. Confira o aplicativo aberto e toque em Enviar; nada foi enviado automaticamente.")
+                    } catch (_: Exception) {
+                        updateStatus("Não foi possível abrir a conversa do WhatsApp.")
+                    }
+                }
+            }
+            .show()
+    }
 
     private fun showMessageReview(message: String) {
         // Este protótipo ainda não chama uma IA para correção gramatical.
