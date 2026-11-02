@@ -1094,10 +1094,10 @@ private fun openWazeDestination(destination: String) {
                     updateStatus(
                         "Encontrei ${matches.size} contatos relacionados a '$recipient'. " +
                             "Escolha o destinatário correto tocando no nome ou dizendo o número/nome completo:\\n" +
-                            labels.joinToString("\\n")
+                            labels.joinToString("\n")
                     )
                     AlertDialog.Builder(this)
-                        .setTitle("Qual Bruno você deseja?")
+                        .setTitle("Qual contato você deseja?")
                         .setItems(labels.toTypedArray()) { _, which ->
                             if (which in messageContactChoices.indices) {
                                 val selected = messageContactChoices[which]
