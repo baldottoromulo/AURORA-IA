@@ -209,7 +209,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     // Não cancela a etapa por silêncio ou falha momentânea do reconhecedor.
                     updateStatus("Continuo aguardando sua resposta. Pode falar novamente.")
                     window.decorView.postDelayed({
-                        if (awaitingCallChoice || awaitingPhoneChoice || awaitingMessageContactChoice || awaitingMessageDictation || awaitingCallConfirmation) startListening()
+                        if (awaitingCallChoice || awaitingPhoneChoice || awaitingMessageContactChoice || awaitingMessageRecipientRetry || awaitingMessageDictation || awaitingCallConfirmation) startListening()
                     }, 650L)
                 } else {
                     updateStatus("Não consegui reconhecer a fala. Toque no microfone e tente novamente.")
