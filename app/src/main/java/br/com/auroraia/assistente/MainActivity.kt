@@ -702,51 +702,84 @@ private fun openWazeDestination(destination: String) {
         }
 
         try {
+            // Contacts retorna uma linha por contato, não uma linha por telefone.
             val projection = arrayOf(
-                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-                ContactsContract.CommonDataKinds.Phone.NUMBER
+                ContactsContract.Contacts._ID,
+                ContactsContract.Contacts.DISPLAY_NAME,
+                ContactsContract.Contacts.HAS_PHONE_NUMBER
             )
-            val selection = "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"
-            val args = arrayOf("%$contactName%")
-            val matches = mutableListOf<Pair<String, String>>()
+            val selection = "${ContactsContract.Contacts.DISPLAY_NAME} LIKE ?"
+            val args = arrayOf("%${contactName.trim()}%")
+            val found = linkedMapOf<String, Pair<String, String>>()
+
             contentResolver.query(
-                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                ContactsContract.Contacts.CONTENT_URI,
                 projection,
                 selection,
                 args,
-                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " ASC"
+                ContactsContract.Contacts.DISPLAY_NAME + " COLLATE NOCASE ASC"
             )?.use { cursor ->
-                val nameIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
-                val numberIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-                while (cursor.moveToNext() && matches.size < 10) {
-                    val name = cursor.getString(nameIndex).orEmpty()
-                    val number = cursor.getString(numberIndex).orEmpty()
-                    if (number.isNotBlank()) matches.add(name to number)
+                val idIndex = cursor.getColumnIndex(ContactsContract.Contacts._ID)
+                val nameIndex = cursor.getColumnIndex(ContactsContract.Contacts.DISPLAY_NAME)
+                val hasPhoneIndex = cursor.getColumnIndex(ContactsContract.Contacts.HAS_PHONE_NUMBER)
+
+                while (cursor.moveToNext()) {
+                    val contactId = cursor.getString(idIndex).orEmpty()
+                    val name = cursor.getString(nameIndex).orEmpty().trim()
+                    val hasPhone = cursor.getInt(hasPhoneIndex) > 0
+                    if (contactId.isBlank() || name.isBlank() || !hasPhone) continue
+
+                    // Recupera um número apenas para iniciar a chamada; nunca o exibe.
+                    val phone = contentResolver.query(
+                        ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                        arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                        "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
+                        arrayOf(contactId),
+                        ContactsContract.CommonDataKinds.Phone.IS_PRIMARY + " DESC, " +
+                            ContactsContract.CommonDataKinds.Phone._ID + " ASC"
+                    )?.use { phoneCursor ->
+                        if (phoneCursor.moveToFirst()) phoneCursor.getString(0).orEmpty() else ""
+                    }.orEmpty()
+
+                    if (phone.isNotBlank()) {
+                        val key = name.lowercase(Locale("pt", "BR")).replace(Regex("\\s+"), " ").trim()
+                        // Uma única opção por nome, mesmo que a agenda tenha vários telefones.
+                        if (!found.containsKey(key)) found[key] = name to phone
+                    }
                 }
             }
 
+            val matches = found.values.toList()
             when (matches.size) {
                 0 -> {
-                    updateStatus("Não encontrei telefone para '$contactName'. Confira o nome ou abra o discador manualmente.")
-                    speak("Não encontrei esse contato com número de telefone.")
+                    updateStatus("Não encontrei contatos com telefone cujo nome contenha '$contactName'.")
+                    speak("Não encontrei contatos com esse nome.")
                 }
                 1 -> {
                     val (name, number) = matches.first()
                     pendingCallName = name
                     pendingCallNumber = number
                     awaitingCallConfirmation = true
-                    updateStatus("Deseja ligar para " + name + "? Diga confirmar ligação ou cancelar.")
-                    speak("Encontrei " + name + ". Diga confirmar ligação ou cancelar.")
-                    speakAndListenForProfile("Diga confirmar ligação ou cancelar.")
+                    updateStatus("Deseja ligar para $name? Responda sim ou não.")
+                    speakAndListenForProfile("Encontrei $name. Deseja ligar? Diga sim ou não.")
                 }
                 else -> {
-                    callChoices = matches.distinctBy { it.first to it.second }.take(4)
+                    callChoices = matches
                     awaitingCallChoice = true
-                    val colors = listOf("azul", "amarelo", "verde", "vermelho")
-                    val spoken = callChoices.mapIndexed { index, item -> "Opção ${index + 1}, ${item.first}, cor ${colors[index]}" }.joinToString(". ")
-                    val visibleChoices = callChoices.mapIndexed { index, item -> "${index + 1}) ${item.first} (${colors[index]})" }.joinToString("\n")
-                    updateStatus("CONTATOS ENCONTRADOS — escolha pelo número, nome completo ou cor:\n" + visibleChoices)
-                    speakAndListenForProfile("Encontrei contatos semelhantes. Confira as opções na tela e escolha dizendo o número, o nome completo ou a cor. " + spoken)
+                    val colors = listOf("azul", "amarelo", "verde", "vermelho", "roxo", "laranja", "rosa", "marrom", "cinza", "preto")
+                    val visibleChoices = callChoices.mapIndexed { index, item ->
+                        val color = colors.getOrNull(index)
+                        if (color != null) "${index + 1}) ${item.first} ($color)"
+                        else "${index + 1}) ${item.first}"
+                    }.joinToString("\n")
+                    updateStatus(
+                        "ENCONTREI ${callChoices.size} CONTATOS COM '$contactName'. " +
+                            "Confira a lista e escolha pelo número ou nome completo:\n" + visibleChoices
+                    )
+                    speakAndListenForProfile(
+                        "Encontrei ${callChoices.size} contatos com $contactName. " +
+                            "A lista completa está na tela. Escolha dizendo o número ou o nome completo."
+                    )
                 }
             }
         } catch (_: SecurityException) {
