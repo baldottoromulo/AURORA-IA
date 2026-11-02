@@ -208,7 +208,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     // Não cancela a etapa por silêncio ou falha momentânea do reconhecedor.
                     updateStatus("Continuo aguardando sua resposta. Pode falar novamente.")
                     window.decorView.postDelayed({
-                        if (awaitingCallChoice || awaitingPhoneChoice || awaitingMessageDictation || awaitingCallConfirmation) startListening()
+                        if (awaitingCallChoice || awaitingPhoneChoice || awaitingMessageContactChoice || awaitingMessageDictation || awaitingCallConfirmation) startListening()
                     }, 650L)
                 } else {
                     updateStatus("Não consegui reconhecer a fala. Toque no microfone e tente novamente.")
@@ -379,11 +379,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     if (awaitingMessageContactChoice) {
         val value = normalizeVoiceChoice(raw)
-        val selectedByName = messageContactChoices.indexOfFirst {
+        val listChoice = resolveListChoice(raw, messageContactChoices.size)
+        val selectedByName = if (listChoice == null) messageContactChoices.indexOfFirst {
             val candidate = normalizeVoiceChoice(it.name)
-            candidate == value || (value.length >= 5 && candidate.contains(value))
-        }
-        val selectedIndex = if (selectedByName >= 0) selectedByName else resolveListChoice(raw, messageContactChoices.size)
+            candidate == value || (value.length >= 5 && candidate == value)
+        } else -1
+        val selectedIndex = if (listChoice != null) listChoice else selectedByName
         when {
             selectedIndex == -1 -> {
                 awaitingMessageContactChoice = false
@@ -504,20 +505,25 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     if (awaitingCallConfirmation) {
         awaitingCallConfirmation = false
-        if (lower.contains("confirmar") || lower == "sim" || lower.contains("pode ligar")) {
+        if (isYes(raw)) {
             val number = pendingCallNumber
             val name = pendingCallName ?: "contato"
             if (number.isNullOrBlank()) { updateStatus("Não há número pendente."); return }
-            if (checkSelfPermission(Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(arrayOf(Manifest.permission.CALL_PHONE), 1003)
-                updateStatus("Autorize chamadas nas permissões do Android para concluir.")
-                speak("Preciso da permissão de chamadas do Android.")
-            } else {
-                try { startActivity(Intent(Intent.ACTION_CALL, Uri.fromParts("tel", number, null))); updateStatus("Ligação iniciada para " + name); speak("Ligando para " + name) }
-                catch (_: Exception) { startActivity(Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null))); updateStatus("Discador aberto; confirme a chamada no aparelho.") }
-                pendingCallNumber = null; pendingCallName = null
+            try {
+                startActivity(Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null)))
+                updateStatus("Discador aberto para $name. Confira o número e confirme a chamada manualmente.")
+                speak("Abri o discador para $name. Confirme a chamada no aparelho.")
+            } catch (_: Exception) {
+                updateStatus("Não foi possível abrir o discador. Nenhuma chamada foi realizada.")
             }
-        } else { pendingCallNumber = null; pendingCallName = null; updateStatus("Ligação cancelada."); speak("Ligação cancelada.") }
+            pendingCallNumber = null
+            pendingCallName = null
+        } else {
+            pendingCallNumber = null
+            pendingCallName = null
+            updateStatus("Ligação cancelada.")
+            speak("Ligação cancelada.")
+        }
         return
     }
 
@@ -1146,15 +1152,31 @@ private fun openWazeDestination(destination: String) {
         )
     }
 
+    // Ajuste conservador inteiramente local: não envia texto para a internet e não
+    // troca palavras, nomes, números ou sentido. É formatação, não correção gramatical completa.
+    private fun refineDictatedTextLocally(input: String): String {
+        var value = input.replace(Regex("\\s+"), " ").trim()
+        if (value.isBlank()) return value
+        value = value.replace(Regex("\\s+([,.;!?])"), "$1")
+            .replace(Regex("([,.;!?])(?=\\S)"), "$1 ")
+        val first = value.firstOrNull()
+        if (first != null && first.isLetter()) {
+            value = first.uppercaseChar() + value.substring(1)
+        }
+        if (value.lastOrNull() !in listOf('.', '!', '?')) value += "."
+        return value
+    }
+
     private fun showWhatsAppMessageReview(name: String, rawNumber: String, packageName: String, message: String) {
+        val refined = refineDictatedTextLocally(message)
         val preview = android.widget.EditText(this).apply {
-            setText(message)
+            setText(refined)
             minLines = 3
             textSize = 17f
         }
         AlertDialog.Builder(this)
             .setTitle("Mensagem para $name")
-            .setMessage("Confira e edite o texto. A AURORA não enviará automaticamente.")
+            .setMessage("Sugestão de organização local (sem internet): espaços, início de frase e pontuação final. Confira nomes, acentos e sentido; a AURORA não envia automaticamente.")
             .setView(preview)
             .setNegativeButton("Cancelar", null)
             .setPositiveButton("Abrir conversa") { _, _ ->
@@ -1178,17 +1200,16 @@ private fun openWazeDestination(destination: String) {
     }
 
     private fun showMessageReview(message: String) {
-        // Este protótipo ainda não chama uma IA para correção gramatical.
-        // A mensagem é mostrada para revisão e só pode ser compartilhada após toque explícito.
+        val refined = refineDictatedTextLocally(message)
         val preview = android.widget.EditText(this).apply {
-            setText(message)
+            setText(refined)
             minLines = 3
             textSize = 17f
         }
 
         android.app.AlertDialog.Builder(this)
             .setTitle("Revise sua mensagem")
-            .setMessage("Confira o texto antes de continuar. Nesta versão, a correção automática por IA ainda não está conectada.")
+            .setMessage("Sugestão local sem envio de dados. A revisão automática avançada de gramática ainda não está integrada; confira o sentido antes de continuar.")
             .setView(preview)
             .setNegativeButton("Cancelar", null)
             .setNeutralButton("Copiar") { _, _ ->
