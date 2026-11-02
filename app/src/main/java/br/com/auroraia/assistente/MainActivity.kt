@@ -1261,14 +1261,6 @@ private fun openWazeDestination(destination: String) {
             startListening()
         } else if (requestCode == 1001) {
             updateStatus("Permissão de microfone negada. O comando por voz não pode funcionar.")
-        } else if (requestCode == 1003) {
-            val number = pendingCallNumber
-            val name = pendingCallName ?: "contato"
-            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED && !number.isNullOrBlank()) {
-                try { startActivity(Intent(Intent.ACTION_CALL, Uri.fromParts("tel", number, null))); updateStatus("Ligação iniciada para " + name); speak("Ligando para " + name) }
-                catch (_: Exception) { updateStatus("Não consegui iniciar a ligação.") }
-                pendingCallNumber = null; pendingCallName = null
-            } else { pendingCallNumber = null; pendingCallName = null; updateStatus("Permissão negada. Nenhuma ligação foi iniciada.") }
         } else if (requestCode == 1002) {
             val contactName = pendingDialContactName
             pendingDialContactName = null
