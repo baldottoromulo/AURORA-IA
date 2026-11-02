@@ -46,6 +46,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var awaitingPhoneChoice = false
     private var pendingPhoneChoices: List<ContactPhone> = emptyList()
     private var awaitingMessageContactChoice = false
+    private var awaitingMessageRecipientRetry = false
     private var messageContactChoices: List<ContactChoice> = emptyList()
     private var awaitingMessageDictation = false
     private var pendingMessageRecipientName: String? = null
@@ -204,7 +205,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                             speak("Não consegui ouvir sua escolha. Toque no microfone quando estiver pronto e diga perfil um ou perfil dois.")
                         }
                     }
-                } else if (awaitingCallChoice || awaitingPhoneChoice || awaitingMessageContactChoice || awaitingMessageDictation || awaitingCallConfirmation) {
+                } else if (awaitingCallChoice || awaitingPhoneChoice || awaitingMessageContactChoice || awaitingMessageRecipientRetry || awaitingMessageDictation || awaitingCallConfirmation) {
                     // Não cancela a etapa por silêncio ou falha momentânea do reconhecedor.
                     updateStatus("Continuo aguardando sua resposta. Pode falar novamente.")
                     window.decorView.postDelayed({
@@ -376,6 +377,21 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     val command = raw.trim()
     val lower = command.lowercase(Locale("pt", "BR"))
+
+    if (awaitingMessageRecipientRetry) {
+        if (normalizeVoiceChoice(raw) in setOf("cancelar", "cancela", "desistir")) {
+            awaitingMessageRecipientRetry = false
+            pendingMessageRecipientName = null
+            pendingMessageWhatsAppPackage = null
+            updateStatus("Busca cancelada. Nenhuma mensagem foi preparada.")
+            speak("Busca cancelada.")
+        } else {
+            val packageName = pendingMessageWhatsAppPackage ?: "com.whatsapp"
+            awaitingMessageRecipientRetry = false
+            beginWhatsAppMessage(raw.trim(), packageName)
+        }
+        return
+    }
 
     if (awaitingMessageContactChoice) {
         val value = normalizeVoiceChoice(raw)
@@ -1045,16 +1061,25 @@ private fun openWazeDestination(destination: String) {
                 ContactsContract.Contacts.HAS_PHONE_NUMBER
             )
             val found = linkedMapOf<String, ContactChoice>()
+            // Consulta a agenda sem depender de LIKE textual, que pode falhar
+            // com acentos, ordem de sobrenomes e nomes compostos.
             contentResolver.query(
                 ContactsContract.Contacts.CONTENT_URI, projection,
-                "${ContactsContract.Contacts.DISPLAY_NAME} LIKE ?",
-                arrayOf("%${recipient.trim()}%"),
+                null, null,
                 ContactsContract.Contacts.DISPLAY_NAME + " COLLATE NOCASE ASC"
             )?.use { cursor ->
+                val requested = normalizeVoiceChoice(recipient)
+                val requestedTokens = requested.split(" ").filter { it.length >= 2 }.toSet()
                 while (cursor.moveToNext()) {
                     val id = cursor.getString(0).orEmpty()
                     val name = cursor.getString(1).orEmpty().trim()
                     if (id.isBlank() || name.isBlank() || cursor.getInt(2) <= 0) continue
+                    val normalizedName = normalizeVoiceChoice(name)
+                    val nameTokens = normalizedName.split(" ").filter { it.length >= 2 }.toSet()
+                    val exact = normalizedName == requested
+                    val contains = normalizedName.contains(requested) || requested.contains(normalizedName)
+                    val tokenMatch = requestedTokens.isNotEmpty() && requestedTokens.all { it in nameTokens }
+                    if (!exact && !contains && !tokenMatch) continue
                     val phones = mutableListOf<ContactPhone>()
                     contentResolver.query(
                         ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
@@ -1078,17 +1103,19 @@ private fun openWazeDestination(destination: String) {
                             phones.add(ContactPhone(number, label, phoneCursor.getInt(3) != 0))
                         }
                     }
-                    if (phones.isNotEmpty()) {
-                        val key = normalizeVoiceChoice(name)
-                        if (!found.containsKey(key)) found[key] = ContactChoice(name, phones)
+                    if (phones.isNotEmpty() && !found.containsKey(normalizedName)) {
+                        found[normalizedName] = ContactChoice(name, phones)
                     }
                 }
             }
             val matches = found.values.toList()
             when (matches.size) {
                 0 -> {
-                    updateStatus("Não encontrei '$recipient' na agenda. Nenhuma conversa foi aberta.")
-                    speak("Não encontrei esse contato. Você pode tentar outro nome ou apelido.")
+                    pendingMessageRecipientName = recipient
+                    pendingMessageWhatsAppPackage = packageName
+                    awaitingMessageRecipientRetry = true
+                    updateStatus("Não localizei '$recipient'. Diga novamente o nome, tente apenas o primeiro nome ou sobrenome, ou diga cancelar.")
+                    speakAndListenForProfile("Não localizei esse contato. Diga novamente o nome, tente primeiro nome ou sobrenome, ou diga cancelar.")
                 }
                 1 -> prepareMessageForContact(matches.first())
                 else -> {
