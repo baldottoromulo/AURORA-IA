@@ -298,13 +298,20 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     if (awaitingCallChoice) {
+        val choiceColors = listOf("azul", "amarelo", "verde", "vermelho", "roxo", "laranja", "rosa", "marrom", "cinza", "preto")
+        val normalizedChoice = lower.replace(Regex("[^\\p{L}\\p{N} ]"), " ").replace(Regex("\\s+"), " ").trim()
         val choice = when {
-            lower.contains("cancelar") || lower.contains("nenhuma") -> -1
-            lower.contains("primeiro") || lower == "um" || lower == "1" || lower.contains("vermelho") -> 0
-            lower.contains("segundo") || lower == "dois" || lower == "2" || lower.contains("azul") -> 1
-            lower.contains("terceiro") || lower == "três" || lower == "3" || lower.contains("verde") -> 2
-            lower.contains("quarto") || lower == "quatro" || lower == "4" || lower.contains("amarelo") -> 3
-            else -> callChoices.indexOfFirst { lower.contains(it.first.lowercase(Locale("pt", "BR"))) }
+            normalizedChoice.contains("cancelar") || normalizedChoice.contains("nenhuma") -> -1
+            normalizedChoice.matches(Regex(".*\\b(primeiro|primeira|um|uma|1)\\b.*")) -> 0
+            normalizedChoice.matches(Regex(".*\\b(segundo|segunda|dois|duas|2)\\b.*")) -> 1
+            normalizedChoice.matches(Regex(".*\\b(terceiro|terceira|tres|3)\\b.*")) -> 2
+            normalizedChoice.matches(Regex(".*\\b(quarto|quarta|quatro|4)\\b.*")) -> 3
+            choiceColors.any { normalizedChoice == it } -> choiceColors.indexOf(normalizedChoice)
+            else -> callChoices.indexOfFirst {
+                normalizedChoice == it.first.lowercase(Locale("pt", "BR"))
+                    .replace(Regex("[^\\p{L}\\p{N} ]"), " ")
+                    .replace(Regex("\\s+"), " ").trim()
+            }
         }
         when {
             choice == -1 -> { awaitingCallChoice = false; callChoices = emptyList(); updateStatus("Seleção cancelada."); speak("Seleção cancelada.") }
