@@ -661,15 +661,15 @@ private fun openWazeDestination(destination: String) {
             override fun onStart(utteranceId: String?) {}
             override fun onError(utteranceId: String?) {
                 runOnUiThread {
-                    if (awaitingWhatsAppProfileChoice || awaitingCallConfirmation || awaitingCallChoice) {
-                        window.decorView.postDelayed({ if (awaitingWhatsAppProfileChoice || awaitingCallConfirmation || awaitingCallChoice) startListening() }, 500L)
+                    if (awaitingWhatsAppProfileChoice || awaitingCallConfirmation || awaitingCallChoice || awaitingPhoneChoice) {
+                        window.decorView.postDelayed({ if (awaitingWhatsAppProfileChoice || awaitingCallConfirmation || awaitingCallChoice || awaitingPhoneChoice) startListening() }, 500L)
                     }
                 }
             }
             override fun onDone(utteranceId: String?) {
                 if (utteranceId == "whatsapp-profile-question") {
                     runOnUiThread {
-                        window.decorView.postDelayed({ if (awaitingWhatsAppProfileChoice || awaitingCallConfirmation) startListening() }, 500L)
+                        window.decorView.postDelayed({ if (awaitingWhatsAppProfileChoice || awaitingCallConfirmation || awaitingCallChoice || awaitingPhoneChoice) startListening() }, 500L)
                     }
                 }
             }
