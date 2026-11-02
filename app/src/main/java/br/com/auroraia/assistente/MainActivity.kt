@@ -205,10 +205,17 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             override fun onResults(results: Bundle?) {
                 if (activeSessionId != speechSessionId) return
                 val candidates = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
-                val spoken = if (awaitingWhatsAppProfileChoice) {
-                    candidates.firstOrNull { isProfileOne(it) || isProfileTwo(it) }
-                        ?: candidates.firstOrNull().orEmpty()
-                } else candidates.firstOrNull().orEmpty()
+                val spoken = when {
+                    awaitingWhatsAppProfileChoice ->
+                        candidates.firstOrNull { isProfileOne(it) || isProfileTwo(it) } ?: candidates.firstOrNull().orEmpty()
+                    awaitingCallChoice ->
+                        candidates.firstOrNull { resolveListChoice(it, callChoices.size) != null } ?: candidates.firstOrNull().orEmpty()
+                    awaitingPhoneChoice ->
+                        candidates.firstOrNull { resolvePhoneChoice(it) != null } ?: candidates.firstOrNull().orEmpty()
+                    awaitingCallConfirmation ->
+                        candidates.firstOrNull { isYes(it) || isNo(it) } ?: candidates.firstOrNull().orEmpty()
+                    else -> candidates.firstOrNull().orEmpty()
+                }
                 commandText.text = "Você disse: $spoken"
                 handleCommand(spoken)
             }
@@ -234,6 +241,54 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             updateStatus("Não foi possível iniciar o reconhecimento de fala.")
         }
     }
+
+    private fun normalizeVoiceChoice(raw: String): String =
+        java.text.Normalizer.normalize(raw.lowercase(Locale("pt", "BR")), java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+            .replace(Regex("[^\\p{L}\\p{N} ]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+    private fun resolveListChoice(raw: String, size: Int): Int? {
+        val value = normalizeVoiceChoice(raw)
+        if (value.contains("cancelar") || value.contains("nenhuma")) return -1
+        val colors = listOf("azul", "amarelo", "verde", "vermelho", "roxo", "laranja", "rosa", "marrom", "cinza", "preto")
+        val colorIndex = colors.indexOfFirst { Regex("\\b${it}\\b").containsMatchIn(value) }
+        if (colorIndex >= 0 && colorIndex < size) return colorIndex
+        val numberWords = listOf(
+            setOf("1", "um", "uma", "primeiro", "primeira"),
+            setOf("2", "dois", "duas", "segundo", "segunda"),
+            setOf("3", "tres", "terceiro", "terceira"),
+            setOf("4", "quatro", "quarto", "quarta"),
+            setOf("5", "cinco", "quinto", "quinta"),
+            setOf("6", "seis", "sexto", "sexta"),
+            setOf("7", "sete", "setimo", "setima"),
+            setOf("8", "oito", "oitavo", "oitava"),
+            setOf("9", "nove", "nono", "nona"),
+            setOf("10", "dez", "decimo", "decima")
+        )
+        numberWords.forEachIndexed { index, words ->
+            if (index < size && words.any { Regex("\\b${Regex.escape(it)}\\b").containsMatchIn(value) }) return index
+        }
+        return null
+    }
+
+    private fun resolvePhoneChoice(raw: String): Int? {
+        val value = normalizeVoiceChoice(raw)
+        if (value.contains("cancelar")) return -1
+        if (value.contains("padrao") || value.contains("principal") || value.contains("preferencial")) {
+            return pendingPhoneChoices.indexOfFirst { it.isPrimary }.takeIf { it >= 0 } ?: 0
+        }
+        val index = resolveListChoice(value, pendingPhoneChoices.size)
+        if (index != null) return index
+        return pendingPhoneChoices.indexOfFirst { phone ->
+            val label = normalizeVoiceChoice(phone.label)
+            label.isNotBlank() && (value == label || value.contains(label))
+        }.takeIf { it >= 0 }
+    }
+
+    private fun isYes(raw: String) = normalizeVoiceChoice(raw) in setOf("sim", "confirmar", "pode ligar", "ligar")
+    private fun isNo(raw: String) = normalizeVoiceChoice(raw) in setOf("nao", "cancela", "cancelar", "nao ligar")
 
     private fun normalizeProfileChoice(raw: String): String =
         raw.lowercase(Locale("pt", "BR"))
@@ -303,19 +358,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     if (awaitingCallChoice) {
-        val normalizedChoice = lower.replace(Regex("[^\\p{L}\\p{N} ]"), " ").replace(Regex("\\s+"), " ").trim()
-        val choice = when {
-            normalizedChoice.contains("cancelar") || normalizedChoice.contains("nenhuma") -> -1
-            normalizedChoice.matches(Regex(".*\\b(primeiro|primeira|um|uma|1)\\b.*")) -> 0
-            normalizedChoice.matches(Regex(".*\\b(segundo|segunda|dois|duas|2)\\b.*")) -> 1
-            normalizedChoice.matches(Regex(".*\\b(terceiro|terceira|tres|3)\\b.*")) -> 2
-            normalizedChoice.matches(Regex(".*\\b(quarto|quarta|quatro|4)\\b.*")) -> 3
-            else -> callChoices.indexOfFirst {
-                normalizedChoice == it.name.lowercase(Locale("pt", "BR"))
-                    .replace(Regex("[^\\p{L}\\p{N} ]"), " ")
-                    .replace(Regex("\\s+"), " ").trim()
-            }
-        }
+        val choice = resolveListChoice(raw, callChoices.size) ?: -99
         when {
             choice == -1 -> {
                 awaitingCallChoice = false
@@ -333,20 +376,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     if (awaitingPhoneChoice) {
-        val normalizedChoice = lower.replace(Regex("[^\\p{L}\\p{N} ]"), " ").replace(Regex("\\s+"), " ").trim()
-        val selectedIndex = when {
-            normalizedChoice.contains("cancelar") -> -1
-            normalizedChoice.contains("padrão") || normalizedChoice.contains("padrao") ||
-                normalizedChoice.contains("principal") || normalizedChoice.contains("preferencial") ->
-                pendingPhoneChoices.indexOfFirst { it.isPrimary }.takeIf { it >= 0 } ?: 0
-            normalizedChoice.matches(Regex(".*\\b(primeiro|primeira|um|uma|1)\\b.*")) -> 0
-            normalizedChoice.matches(Regex(".*\\b(segundo|segunda|dois|duas|2)\\b.*")) -> 1
-            normalizedChoice.matches(Regex(".*\\b(terceiro|terceira|tres|3)\\b.*")) -> 2
-            normalizedChoice.matches(Regex(".*\\b(quarto|quarta|quatro|4)\\b.*")) -> 3
-            else -> pendingPhoneChoices.indexOfFirst {
-                normalizedChoice == it.label.lowercase(Locale("pt", "BR"))
-            }
-        }
+        val selectedIndex = resolvePhoneChoice(raw) ?: -99
         when {
             selectedIndex == -1 -> {
                 awaitingPhoneChoice = false
