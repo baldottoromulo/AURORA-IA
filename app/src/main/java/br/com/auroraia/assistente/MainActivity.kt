@@ -38,6 +38,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var awaitingCallConfirmation = false
     private var pendingCallNumber: String? = null
     private var pendingCallName: String? = null
+    private var awaitingCallChoice = false
+    private var callChoices: List<Pair<String, String>> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -291,6 +293,30 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     speakAndListenForProfile("Não entendi. Diga PRIMEIRO ou SEGUNDO.")
                 }
             }
+        }
+        return
+    }
+
+    if (awaitingCallChoice) {
+        val choice = when {
+            lower.contains("cancelar") || lower.contains("nenhuma") -> -1
+            lower.contains("primeiro") || lower == "um" || lower == "1" || lower.contains("vermelho") -> 0
+            lower.contains("segundo") || lower == "dois" || lower == "2" || lower.contains("azul") -> 1
+            lower.contains("terceiro") || lower == "três" || lower == "3" || lower.contains("verde") -> 2
+            lower.contains("quarto") || lower == "quatro" || lower == "4" || lower.contains("amarelo") -> 3
+            else -> callChoices.indexOfFirst { lower.contains(it.first.lowercase(Locale("pt", "BR"))) }
+        }
+        when {
+            choice == -1 -> { awaitingCallChoice = false; callChoices = emptyList(); updateStatus("Seleção cancelada."); speak("Seleção cancelada.") }
+            choice in callChoices.indices -> {
+                awaitingCallChoice = false
+                val selected = callChoices[choice]
+                pendingCallName = selected.first; pendingCallNumber = selected.second
+                awaitingCallConfirmation = true
+                updateStatus("Você escolheu " + selected.first + ". Deseja ligar? Responda sim ou não.")
+                speakAndListenForProfile("Você escolheu " + selected.first + ". Deseja ligar? Diga sim ou não.")
+            }
+            else -> speakAndListenForProfile("Não identifiquei a opção. Diga o número, a cor ou o nome completo.")
         }
         return
     }
@@ -587,8 +613,8 @@ private fun openWazeDestination(destination: String) {
             override fun onStart(utteranceId: String?) {}
             override fun onError(utteranceId: String?) {
                 runOnUiThread {
-                    if (awaitingWhatsAppProfileChoice || awaitingCallConfirmation) {
-                        window.decorView.postDelayed({ if (awaitingWhatsAppProfileChoice || awaitingCallConfirmation) startListening() }, 500L)
+                    if (awaitingWhatsAppProfileChoice || awaitingCallConfirmation || awaitingCallChoice) {
+                        window.decorView.postDelayed({ if (awaitingWhatsAppProfileChoice || awaitingCallConfirmation || awaitingCallChoice) startListening() }, 500L)
                     }
                 }
             }
@@ -714,21 +740,12 @@ private fun openWazeDestination(destination: String) {
                     speakAndListenForProfile("Diga confirmar ligação ou cancelar.")
                 }
                 else -> {
-                    val names = matches.map { it.first }.distinct().toTypedArray()
-                    AlertDialog.Builder(this)
-                        .setTitle("Qual contato você deseja ligar?")
-                        .setItems(names) { _, which ->
-                            val selectedName = names[which]
-                            val selected = matches.first { it.first == selectedName }
-                            try {
-                                startActivity(Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", selected.second, null)))
-                                updateStatus("Contato localizado: ${selected.first}. Confirme o número antes de ligar.")
-                            } catch (_: ActivityNotFoundException) {
-                                updateStatus("Não encontrei um aplicativo de telefone disponível.")
-                            }
-                        }
-                        .setNegativeButton("Cancelar", null)
-                        .show()
+                    callChoices = matches.distinctBy { it.first to it.second }.take(4)
+                    awaitingCallChoice = true
+                    val colors = listOf("vermelho", "azul", "verde", "amarelo")
+                    val spoken = callChoices.mapIndexed { index, item -> "Opção ${index + 1}, ${colors[index]}, ${item.first}" }.joinToString(". ")
+                    updateStatus("Escolha por voz: número, cor ou nome completo.")
+                    speakAndListenForProfile("Encontrei contatos semelhantes. " + spoken + ". Diga o número, a cor ou o nome completo.")
                 }
             }
         } catch (_: SecurityException) {
