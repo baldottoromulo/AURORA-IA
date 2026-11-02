@@ -45,6 +45,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var callChoices: List<ContactChoice> = emptyList()
     private var awaitingPhoneChoice = false
     private var pendingPhoneChoices: List<ContactPhone> = emptyList()
+    private var awaitingMessageContactChoice = false
+    private var messageContactChoices: List<ContactChoice> = emptyList()
     private var awaitingMessageDictation = false
     private var pendingMessageRecipientName: String? = null
     private var pendingMessageRecipientNumber: String? = null
@@ -202,7 +204,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                             speak("Não consegui ouvir sua escolha. Toque no microfone quando estiver pronto e diga perfil um ou perfil dois.")
                         }
                     }
-                } else if (awaitingCallChoice || awaitingPhoneChoice || awaitingMessageDictation || awaitingCallConfirmation) {
+                } else if (awaitingCallChoice || awaitingPhoneChoice || awaitingMessageContactChoice || awaitingMessageDictation || awaitingCallConfirmation) {
                     // Não cancela a etapa por silêncio ou falha momentânea do reconhecedor.
                     updateStatus("Continuo aguardando sua resposta. Pode falar novamente.")
                     window.decorView.postDelayed({
@@ -222,6 +224,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                         candidates.firstOrNull { resolveListChoice(it, callChoices.size) != null } ?: candidates.firstOrNull().orEmpty()
                     awaitingPhoneChoice ->
                         candidates.firstOrNull { resolvePhoneChoice(it) != null } ?: candidates.firstOrNull().orEmpty()
+                    awaitingMessageContactChoice ->
+                        candidates.firstOrNull { resolveListChoice(it, messageContactChoices.size) != null ||
+                            messageContactChoices.any { contact -> normalizeVoiceChoice(contact.name) == normalizeVoiceChoice(it) } }
+                            ?: candidates.firstOrNull().orEmpty()
                     awaitingCallConfirmation ->
                         candidates.firstOrNull { isYes(it) || isNo(it) } ?: candidates.firstOrNull().orEmpty()
                     else -> candidates.firstOrNull().orEmpty()
@@ -242,6 +248,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     awaitingWhatsAppProfileChoice -> "Diga perfil um ou perfil dois"
                     awaitingCallChoice -> "Diga apenas o número da opção ou a cor correspondente"
                     awaitingPhoneChoice -> "Diga padrão ou o número da opção"
+                    awaitingMessageContactChoice -> "Diga o número da opção ou o nome completo do contato"
                     awaitingCallConfirmation -> "Diga sim ou não"
                     else -> "Fale seu comando para a AURORA IA"
                 }
@@ -369,6 +376,36 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     val command = raw.trim()
     val lower = command.lowercase(Locale("pt", "BR"))
+
+    if (awaitingMessageContactChoice) {
+        val value = normalizeVoiceChoice(raw)
+        val selectedByName = messageContactChoices.indexOfFirst {
+            val candidate = normalizeVoiceChoice(it.name)
+            candidate == value || (value.length >= 5 && candidate.contains(value))
+        }
+        val selectedIndex = if (selectedByName >= 0) selectedByName else resolveListChoice(raw, messageContactChoices.size)
+        when {
+            selectedIndex == -1 -> {
+                awaitingMessageContactChoice = false
+                messageContactChoices = emptyList()
+                pendingMessageRecipientName = null
+                pendingMessageWhatsAppPackage = null
+                updateStatus("Escolha do destinatário cancelada. Nenhuma mensagem foi preparada.")
+                speak("Escolha cancelada.")
+            }
+            selectedIndex != null && selectedIndex in messageContactChoices.indices -> {
+                val contact = messageContactChoices[selectedIndex]
+                awaitingMessageContactChoice = false
+                messageContactChoices = emptyList()
+                prepareMessageForContact(contact)
+            }
+            else -> {
+                updateStatus("Não identifiquei o destinatário. Diga o número da opção ou o nome completo como aparece na lista.")
+                speakAndListenForProfile("Não identifiquei. Diga o número da opção ou o nome completo do contato.")
+            }
+        }
+        return
+    }
 
     if (awaitingMessageDictation) {
         val message = raw.trim()
@@ -753,7 +790,7 @@ private fun openWazeDestination(destination: String) {
     }
 
     private fun hasPendingVoiceChoice(): Boolean =
-        awaitingWhatsAppProfileChoice || awaitingCallConfirmation || awaitingCallChoice || awaitingPhoneChoice || awaitingMessageDictation
+        awaitingWhatsAppProfileChoice || awaitingCallConfirmation || awaitingCallChoice || awaitingPhoneChoice || awaitingMessageContactChoice || awaitingMessageDictation
 
     private fun speakAndListenForProfile(message: String) {
         // Invalida a escuta anterior antes da fala, evitando que um callback antigo
@@ -996,47 +1033,117 @@ private fun openWazeDestination(destination: String) {
             return
         }
         try {
-            val projection = arrayOf(ContactsContract.Contacts._ID, ContactsContract.Contacts.DISPLAY_NAME)
-            val matches = mutableListOf<Pair<String, String>>()
+            val projection = arrayOf(
+                ContactsContract.Contacts._ID,
+                ContactsContract.Contacts.DISPLAY_NAME,
+                ContactsContract.Contacts.HAS_PHONE_NUMBER
+            )
+            val found = linkedMapOf<String, ContactChoice>()
             contentResolver.query(
                 ContactsContract.Contacts.CONTENT_URI, projection,
                 "${ContactsContract.Contacts.DISPLAY_NAME} LIKE ?",
-                arrayOf("%$recipient%"),
+                arrayOf("%${recipient.trim()}%"),
                 ContactsContract.Contacts.DISPLAY_NAME + " COLLATE NOCASE ASC"
             )?.use { cursor ->
                 while (cursor.moveToNext()) {
                     val id = cursor.getString(0).orEmpty()
-                    val name = cursor.getString(1).orEmpty()
-                    val number = contentResolver.query(
+                    val name = cursor.getString(1).orEmpty().trim()
+                    if (id.isBlank() || name.isBlank() || cursor.getInt(2) <= 0) continue
+                    val phones = mutableListOf<ContactPhone>()
+                    contentResolver.query(
                         ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                        arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                        arrayOf(
+                            ContactsContract.CommonDataKinds.Phone.NUMBER,
+                            ContactsContract.CommonDataKinds.Phone.TYPE,
+                            ContactsContract.CommonDataKinds.Phone.LABEL,
+                            ContactsContract.CommonDataKinds.Phone.IS_PRIMARY
+                        ),
                         "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
-                        arrayOf(id), null
-                    )?.use { phones -> if (phones.moveToFirst()) phones.getString(0).orEmpty() else "" }.orEmpty()
-                    if (number.isNotBlank() && matches.none { it.first.equals(name, true) }) matches.add(name to number)
+                        arrayOf(id),
+                        ContactsContract.CommonDataKinds.Phone.IS_PRIMARY + " DESC, " +
+                            ContactsContract.CommonDataKinds.Phone._ID + " ASC"
+                    )?.use { phoneCursor ->
+                        while (phoneCursor.moveToNext()) {
+                            val number = phoneCursor.getString(0).orEmpty().trim()
+                            if (number.isBlank() || phones.any { it.number == number }) continue
+                            val label = ContactsContract.CommonDataKinds.Phone.getTypeLabel(
+                                resources, phoneCursor.getInt(1), phoneCursor.getString(2)
+                            ).toString().ifBlank { "Telefone" }
+                            phones.add(ContactPhone(number, label, phoneCursor.getInt(3) != 0))
+                        }
+                    }
+                    if (phones.isNotEmpty()) {
+                        val key = normalizeVoiceChoice(name)
+                        if (!found.containsKey(key)) found[key] = ContactChoice(name, phones)
+                    }
                 }
             }
-            if (matches.isEmpty()) {
-                updateStatus("Não encontrei $recipient com telefone na agenda. Nenhum WhatsApp foi aberto.")
-                speak("Não encontrei esse contato na sua agenda.")
-                return
+            val matches = found.values.toList()
+            when (matches.size) {
+                0 -> {
+                    updateStatus("Não encontrei '$recipient' na agenda. Nenhuma conversa foi aberta.")
+                    speak("Não encontrei esse contato. Você pode tentar outro nome ou apelido.")
+                }
+                1 -> prepareMessageForContact(matches.first())
+                else -> {
+                    pendingMessageRecipientName = recipient
+                    pendingMessageWhatsAppPackage = packageName
+                    messageContactChoices = matches
+                    awaitingMessageContactChoice = true
+                    val labels = matches.mapIndexed { index, item -> "${index + 1}. ${item.name}" }
+                    updateStatus(
+                        "Encontrei ${matches.size} contatos relacionados a '$recipient'. " +
+                            "Escolha o destinatário correto tocando no nome ou dizendo o número/nome completo:\\n" +
+                            labels.joinToString("\\n")
+                    )
+                    AlertDialog.Builder(this)
+                        .setTitle("Qual Bruno você deseja?")
+                        .setItems(labels.toTypedArray()) { _, which ->
+                            if (which in messageContactChoices.indices) {
+                                val selected = messageContactChoices[which]
+                                awaitingMessageContactChoice = false
+                                messageContactChoices = emptyList()
+                                prepareMessageForContact(selected)
+                            }
+                        }
+                        .setNegativeButton("Cancelar") { _, _ ->
+                            awaitingMessageContactChoice = false
+                            messageContactChoices = emptyList()
+                            pendingMessageRecipientName = null
+                            pendingMessageWhatsAppPackage = null
+                            updateStatus("Seleção cancelada. Nenhuma mensagem foi preparada.")
+                        }
+                        .show()
+                    speakAndListenForProfile(
+                        "Encontrei ${matches.size} contatos relacionados a $recipient. " +
+                            "Escolha na tela ou diga o número da opção ou o nome completo."
+                    )
+                }
             }
-            if (matches.size > 1) {
-                updateStatus("Encontrei mais de um contato com esse nome. Por enquanto, diga o nome mais completo para identificar o destinatário.")
-                speak("Encontrei mais de um contato. Diga o nome completo para identificar o destinatário.")
-                return
-            }
-            val (name, number) = matches.first()
-            pendingMessageRecipientName = name
-            pendingMessageRecipientNumber = number
-            pendingMessageWhatsAppPackage = packageName
-            awaitingMessageDictation = true
-            updateStatus("Destinatário: $name. Dite agora o texto da mensagem. A mensagem será apresentada para revisão antes de abrir o WhatsApp.")
-            speakAndListenForProfile("Encontrei $name. Dite agora o texto da mensagem. Ao terminar, vou mostrar o texto para sua revisão.")
+        } catch (_: SecurityException) {
+            updateStatus("O Android não autorizou a leitura dos contatos. Nenhuma mensagem foi preparada.")
+            speak("Não tenho autorização para consultar os contatos.")
         } catch (_: Exception) {
-            updateStatus("Não consegui consultar o contato. Verifique a permissão de contatos.")
+            updateStatus("Não consegui consultar a agenda. Nenhuma mensagem foi preparada.")
             speak("Não consegui consultar seus contatos.")
         }
+    }
+
+    private fun prepareMessageForContact(contact: ContactChoice) {
+        val selectedPhone = contact.phones.firstOrNull { it.isPrimary } ?: contact.phones.firstOrNull()
+        if (selectedPhone == null) {
+            updateStatus("O contato não possui telefone disponível. Nenhuma conversa foi aberta.")
+            speak("Esse contato não possui telefone disponível.")
+            return
+        }
+        pendingMessageRecipientName = contact.name
+        pendingMessageRecipientNumber = selectedPhone.number
+        awaitingMessageDictation = true
+        updateStatus("Destinatário selecionado: ${contact.name}. Agora dite a mensagem.")
+        speakAndListenForProfile(
+            "Destinatário selecionado: ${contact.name}. " +
+                "Vou usar o telefone ${selectedPhone.label}. Dite agora o texto da mensagem."
+        )
     }
 
     private fun showWhatsAppMessageReview(name: String, rawNumber: String, packageName: String, message: String) {
