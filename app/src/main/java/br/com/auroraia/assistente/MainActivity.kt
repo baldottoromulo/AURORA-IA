@@ -8,6 +8,9 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.provider.ContactsContract
+import android.os.Handler
+import android.os.Looper
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -29,6 +32,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var commandText: TextView
     private lateinit var listenButton: Button
     private lateinit var keyguardManager: KeyguardManager
+    private var awaitingMessageDictation = false
+    private var pendingContactName: String = ""
+    private var pendingMessageText: String = ""
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val contactPickerRequest = 2401
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -141,13 +149,28 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() { updateStatus("Processando seu comando…") }
             override fun onError(error: Int) {
-                updateStatus("Não consegui reconhecer a fala. Tente novamente.")
+                if (awaitingMessageDictation) {
+                    updateStatus("Não consegui captar a mensagem inteira. Toque no microfone e dite novamente.")
+                    speak("Não consegui entender a mensagem. Toque no microfone e tente novamente.")
+                } else {
+                    updateStatus("Não consegui reconhecer a fala. Tente novamente.")
+                }
             }
             override fun onResults(results: Bundle?) {
                 val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull().orEmpty()
                 commandText.text = "Você disse: $spoken"
-                handleCommand(spoken)
+                if (awaitingMessageDictation) {
+                    awaitingMessageDictation = false
+                    if (spoken.isBlank()) {
+                        updateStatus("Nenhum texto foi reconhecido. Toque no microfone para ditar novamente.")
+                    } else {
+                        pendingMessageText = organizeMessageLocally(spoken)
+                        showMessageReview(pendingMessageText)
+                    }
+                } else {
+                    handleCommand(spoken)
+                }
             }
             override fun onPartialResults(partialResults: Bundle?) {}
             override fun onEvent(eventType: Int, params: Bundle?) {}
@@ -209,6 +232,24 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             }
         }
 
+        lower.contains("mensagem para ") ||
+        lower.contains("mensagem pro ") ||
+        lower.contains("preparar mensagem para ") ||
+        lower.contains("preparar mensagem pro ") ||
+        lower.contains("enviar mensagem para ") ||
+        lower.contains("enviar mensagem pro ") -> {
+            val contact = command.substringAfter("mensagem", "")
+                .replaceFirst(Regex("^(\\s*(para|pro)\\s*)", RegexOption.IGNORE_CASE), "")
+                .trim()
+                .trimEnd('.', ',', '!', '?')
+            if (contact.isBlank()) {
+                updateStatus("Não identifiquei o contato. Diga: mensagem para nome do contato.")
+                speak("Para qual contato você deseja preparar a mensagem?")
+            } else {
+                startMessageDictation(contact)
+            }
+        }
+
         lower.contains("abrir whatsapp") || lower == "whatsapp" -> {
             openWhatsApp()
         }
@@ -216,11 +257,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         lower.startsWith("preparar mensagem:") ||
         lower.startsWith("corrigir mensagem:") -> {
             val message = command.substringAfter(":").trim()
-
             if (message.isBlank()) {
-                updateStatus("Diga preparar mensagem e depois fale o texto.")
+                updateStatus("Diga o texto da mensagem depois de tocar no microfone.")
             } else {
-                showMessageReview(message)
+                pendingContactName = ""
+                pendingMessageText = organizeMessageLocally(message)
+                showMessageReview(pendingMessageText)
             }
         }
 
@@ -401,38 +443,106 @@ private fun openWazeDestination(destination: String) {
         }
     }
 
+    private fun startMessageDictation(contactName: String) {
+        if (keyguardManager.isKeyguardLocked) {
+            updateStatus("Ação bloqueada: desbloqueie o aparelho pelos meios normais do Android.")
+            return
+        }
+        pendingContactName = contactName
+        pendingMessageText = ""
+        awaitingMessageDictation = true
+        updateStatus("Contato solicitado: $contactName. Vou aguardar o texto da mensagem.")
+        speak("Mensagem para $contactName. Dite o texto depois do sinal.")
+        mainHandler.postDelayed({
+            if (awaitingMessageDictation) startListening()
+        }, 1200)
+    }
+
+    // Organização local básica: não substitui uma correção gramatical feita por IA.
+    private fun organizeMessageLocally(raw: String): String {
+        val text = raw.replace(Regex("\\s+"), " ").trim()
+        if (text.isBlank()) return text
+        val capitalized = text.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale("pt", "BR")) else it.toString() }
+        return if (capitalized.last() in ".!?") capitalized else "$capitalized."
+    }
+
     private fun showMessageReview(message: String) {
-        // Este protótipo ainda não chama uma IA para correção gramatical.
-        // A mensagem é mostrada para revisão e só pode ser compartilhada após toque explícito.
         val preview = android.widget.EditText(this).apply {
             setText(message)
-            minLines = 3
+            minLines = 4
             textSize = 17f
+            setSelection(text.length)
+        }
+        val destination = if (pendingContactName.isBlank()) {
+            "Confira o texto. A organização aplicada é local e básica; nomes, sentido e gramática devem ser conferidos."
+        } else {
+            "Contato solicitado: $pendingContactName\\n\\nConfira o texto. A organização aplicada é local e básica; nomes, sentido e gramática devem ser conferidos."
         }
 
-        android.app.AlertDialog.Builder(this)
+        AlertDialog.Builder(this)
             .setTitle("Revise sua mensagem")
-            .setMessage("Confira o texto antes de continuar. Nesta versão, a correção automática por IA ainda não está conectada.")
+            .setMessage(destination)
             .setView(preview)
-            .setNegativeButton("Cancelar", null)
-            .setNeutralButton("Copiar") { _, _ ->
-                val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Mensagem revisada", preview.text.toString()))
-                updateStatus("Texto copiado. Nenhuma mensagem foi enviada.")
+            .setNegativeButton("Cancelar") { _, _ ->
+                pendingMessageText = ""
+                pendingContactName = ""
+                updateStatus("Preparação cancelada. Nenhuma mensagem foi enviada.")
             }
-            .setPositiveButton("Preparar envio") { _, _ ->
-                val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_TEXT, preview.text.toString())
-                }
-                try {
-                    startActivity(Intent.createChooser(sendIntent, "Escolha o aplicativo para continuar"))
-                    updateStatus("Texto preparado para revisão no aplicativo escolhido. Envio não automático.")
-                } catch (_: Exception) {
-                    updateStatus("Não foi possível abrir o menu de compartilhamento.")
+            .setNeutralButton("Ditar novamente") { _, _ ->
+                startMessageDictation(pendingContactName)
+            }
+            .setPositiveButton("Escolher contato") { _, _ ->
+                pendingMessageText = preview.text.toString().trim()
+                if (pendingMessageText.isBlank()) {
+                    updateStatus("A mensagem está vazia. Nada foi enviado.")
+                } else {
+                    try {
+                        val pick = Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Phone.CONTENT_URI)
+                        startActivityForResult(pick, contactPickerRequest)
+                        updateStatus("Selecione na agenda o contato $pendingContactName. A mensagem não será enviada automaticamente.")
+                    } catch (_: ActivityNotFoundException) {
+                        updateStatus("Não foi possível abrir a agenda de contatos.")
+                    }
                 }
             }
             .show()
+    }
+
+    @Deprecated("Deprecated in Android API; retained for compatibility with the current project target")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != contactPickerRequest || resultCode != RESULT_OK || data?.data == null) return
+
+        val contactUri = data.data!!
+        val cursor = contentResolver.query(
+            contactUri,
+            arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER, ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME),
+            null, null, null
+        )
+        var phoneNumber: String? = null
+        var displayName: String? = null
+        cursor?.use {
+            if (it.moveToFirst()) {
+                phoneNumber = it.getString(0)
+                displayName = it.getString(1)
+            }
+        }
+
+        val digits = phoneNumber.orEmpty().filter { it.isDigit() }
+        if (digits.isBlank()) {
+            updateStatus("Não consegui obter o telefone do contato. Nenhuma mensagem foi enviada.")
+            return
+        }
+
+        // O WhatsApp abre a conversa com o texto preenchido; o usuário ainda precisa tocar em Enviar.
+        val normalizedNumber = if (digits.startsWith("55")) digits else "55$digits"
+        val uri = Uri.parse("https://wa.me/$normalizedNumber?text=${Uri.encode(pendingMessageText)}")
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, uri))
+            updateStatus("Conversa de ${displayName ?: pendingContactName} aberta com o texto preenchido. Revise e toque em Enviar no WhatsApp.")
+        } catch (_: Exception) {
+            updateStatus("Não consegui abrir a conversa no WhatsApp. O texto continua preparado e não foi enviado.")
+        }
     }
 
     private fun updateStatus(message: String) {
