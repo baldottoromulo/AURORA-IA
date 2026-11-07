@@ -455,7 +455,7 @@ private fun openWazeDestination(destination: String) {
         speak("Mensagem para $contactName. Dite o texto depois do sinal.")
         mainHandler.postDelayed({
             if (awaitingMessageDictation) startListening()
-        }, 1200)
+        }, 2500)
     }
 
     // Organização local básica: não substitui uma correção gramatical feita por IA.
