@@ -35,6 +35,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var awaitingMessageDictation = false
     private var pendingContactName: String = ""
     private var pendingMessageText: String = ""
+    private var awaitingWhatsAppProfileChoice = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private val contactPickerRequest = 2401
 
@@ -92,7 +93,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val whatsappSettingsButton = Button(this).apply {
             text = "⚙  ESCOLHER WHATSAPP"
             textSize = 15f
-            setOnClickListener { selectWhatsApp() }
+            setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
         }
 
         val help = TextView(this).apply {
@@ -150,10 +151,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             override fun onEndOfSpeech() { updateStatus("Processando seu comando…") }
             override fun onError(error: Int) {
                 if (awaitingMessageDictation) {
-                    updateStatus("Não consegui captar a mensagem inteira. Toque no microfone e dite novamente.")
-                    speak("Não consegui entender a mensagem. Toque no microfone e tente novamente.")
+                    showDictationRetry("Não consegui captar a mensagem. Deseja tentar novamente?")
                 } else {
-                    updateStatus("Não consegui reconhecer a fala. Tente novamente.")
+                    updateStatus("Não consegui reconhecer a fala. Toque no microfone e tente novamente.")
                 }
             }
             override fun onResults(results: Bundle?) {
@@ -163,7 +163,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 if (awaitingMessageDictation) {
                     awaitingMessageDictation = false
                     if (spoken.isBlank()) {
-                        updateStatus("Nenhum texto foi reconhecido. Toque no microfone para ditar novamente.")
+                        showDictationRetry("Não recebi o texto. Deseja ditar novamente?")
                     } else {
                         pendingMessageText = organizeMessageLocally(spoken)
                         showMessageReview(pendingMessageText)
@@ -197,6 +197,20 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     val command = raw.trim()
     val lower = command.lowercase(Locale("pt", "BR"))
 
+    if (awaitingWhatsAppProfileChoice) {
+        awaitingWhatsAppProfileChoice = false
+        when {
+            lower == "1" || lower.contains("perfil 1") || lower.contains("um") || lower.contains("pessoal") || lower.contains("principal") -> openWhatsApp()
+            lower == "2" || lower.contains("perfil 2") || lower.contains("dois") || lower.contains("trabalho") || lower.contains("profissional") || lower.contains("comercial") -> openWhatsAppProfile2()
+            else -> {
+                awaitingWhatsAppProfileChoice = true
+                updateStatus("Diga perfil 1 ou perfil 2.")
+                speak("Diga perfil um ou perfil dois.")
+            }
+        }
+        return
+    }
+
     when {
         lower.contains("abrir banco") ||
         lower.contains("abre banco") ||
@@ -229,6 +243,40 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 speak("Para onde você quer ir?")
             } else {
                 openWazeDestination(destination)
+            }
+        }
+
+        lower.contains("whatsapp 2") ||
+        lower.contains("whatsapp dois") ||
+        lower.contains("segundo whatsapp") ||
+        lower.contains("whatsapp secundário") ||
+        lower.contains("whatsapp secundario") ||
+        lower.contains("whatsapp profissional") ||
+        lower.contains("whatsapp comercial") ||
+        (lower.contains("whatsapp") && lower.contains("trabalho")) -> {
+            openWhatsAppProfile2()
+        }
+
+        lower.contains("whatsapp pessoal") ||
+        lower.contains("whatsapp principal") ||
+        lower.contains("whatsapp 1") ||
+        lower.contains("whatsapp um") ||
+        lower.contains("whatsapp vivo") -> {
+            openWhatsApp()
+        }
+
+        lower.contains("abrir whatsapp") || lower == "whatsapp" -> {
+            val prefs = getSharedPreferences("aurora_settings", MODE_PRIVATE)
+            val firstEnabled = prefs.getBoolean("profile_1_enabled", true)
+            val secondEnabled = prefs.getBoolean("profile_2_enabled", false)
+            when {
+                firstEnabled && secondEnabled -> {
+                    awaitingWhatsAppProfileChoice = true
+                    updateStatus("Dois perfis estão ativos. Diga perfil 1 ou perfil 2.")
+                    speak("Qual WhatsApp deseja abrir? Perfil um ou perfil dois?")
+                }
+                secondEnabled -> openWhatsAppProfile2()
+                else -> openWhatsApp()
             }
         }
 
@@ -458,6 +506,23 @@ private fun openWazeDestination(destination: String) {
         }, 2500)
     }
 
+    private fun showDictationRetry(message: String) {
+        awaitingMessageDictation = false
+        updateStatus(message)
+        AlertDialog.Builder(this)
+            .setTitle("Ditado não concluído")
+            .setMessage(message)
+            .setNegativeButton("Cancelar") { _, _ ->
+                awaitingMessageDictation = false
+                updateStatus("Ditado cancelado. Nenhuma mensagem foi enviada.")
+            }
+            .setPositiveButton("Tentar novamente") { _, _ ->
+                startMessageDictation(pendingContactName)
+            }
+            .setCancelable(false)
+            .show()
+    }
+
     // Organização local básica: não substitui uma correção gramatical feita por IA.
     private fun organizeMessageLocally(raw: String): String {
         val text = raw.replace(Regex("\\s+"), " ").trim()
@@ -538,8 +603,14 @@ private fun openWazeDestination(destination: String) {
         val normalizedNumber = if (digits.startsWith("55")) digits else "55$digits"
         val uri = Uri.parse("https://wa.me/$normalizedNumber?text=${Uri.encode(pendingMessageText)}")
         try {
-            startActivity(Intent(Intent.ACTION_VIEW, uri))
-            updateStatus("Conversa de ${displayName ?: pendingContactName} aberta com o texto preenchido. Revise e toque em Enviar no WhatsApp.")
+            val prefs = getSharedPreferences("aurora_settings", MODE_PRIVATE)
+            val packageToOpen = prefs.getString("profile_1_package", null)
+                ?.takeIf { it == "com.whatsapp" || it == "com.whatsapp.w4b" }
+                ?: prefs.getString("whatsapp_package", "com.whatsapp")
+                ?: "com.whatsapp"
+            val whatsappIntent = Intent(Intent.ACTION_VIEW, uri).setPackage(packageToOpen)
+            startActivity(whatsappIntent)
+            updateStatus("Conversa de ${displayName ?: pendingContactName} solicitada no WhatsApp selecionado. Confira o destinatário e toque em Enviar.")
         } catch (_: Exception) {
             updateStatus("Não consegui abrir a conversa no WhatsApp. O texto continua preparado e não foi enviado.")
         }
