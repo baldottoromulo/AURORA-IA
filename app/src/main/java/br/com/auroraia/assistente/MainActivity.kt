@@ -181,7 +181,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     when {
                         whatsappProfileChoiceRetries < 3 -> {
                             whatsappProfileChoiceRetries++
-                            updateStatus("Aguardando sua resposta. Diga perfil 1 ou perfil 2; você pode falar novamente.")
+                            updateStatus("Aguardando sua resposta. Perfil 1: Vivo, principal ou primeiro. Perfil 2: Tim, secundário ou segundo.")
                             window.decorView.postDelayed({
                                 if (awaitingWhatsAppProfileChoice) startListening()
                             }, 900L)
@@ -189,7 +189,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                         whatsappProfileChoiceRetries == 3 -> {
                             whatsappProfileChoiceRetries++
                             updateStatus("Ainda aguardando. Vou repetir a pergunta e ouvir novamente.")
-                            speakAndListenForProfile("Qual perfil você deseja abrir? Diga perfil um ou perfil dois.")
+                            speakAndListenForProfile("Qual perfil deseja usar? Diga perfil um, Vivo, principal ou primeiro; ou perfil dois, Tim, secundário ou segundo.")
                         }
                         whatsappProfileChoiceRetries < 6 -> {
                             whatsappProfileChoiceRetries++
@@ -356,7 +356,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             value.matches(Regex(".*\\b(1|um|uma|primeiro|primeira)\\b.*")) ||
             value.contains("perfil principal") || value.contains("whatsapp pessoal") ||
             value.contains("primeiro whatsapp") || value.contains("primeira opção") || value.contains("primeira opcao") ||
-            value == "vivo" || value.contains("whatsapp vivo") || value == "pessoal" || value.contains("perfil pessoal")
+            value == "vivo" || value.contains("linha vivo") || value.contains("whatsapp vivo") || value == "pessoal" || value == "principal" || value == "primario" || value == "primeiro" || value == "primeira" || value == "linha principal" || value == "linha um" || value == "linha 1" || value.contains("perfil pessoal") || value.contains("perfil principal") || value.contains("perfil primeiro") || value.contains("whatsapp principal") || value.contains("whatsapp pessoal")
     }
 
     private fun isProfileTwo(raw: String): Boolean {
@@ -364,9 +364,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         return value.matches(Regex("^(perfil )?(2|dois|duas|segundo|segunda|segundo perfil|segunda opção|segunda opcao|perfil segundo|segundo whatsapp|segunda conta|número dois|numero dois|opção dois|opcao dois|opção 2|opcao 2)$")) ||
             value.matches(Regex(".*\\b(2|dois|duas|segundo|segunda)\\b.*")) ||
             value.contains("segundo whatsapp") || value.contains("segunda opção") || value.contains("segunda opcao") ||
-            value == "tim" || value.contains("whatsapp tim") || value == "profissional" ||
+            value == "tim" || value.contains("linha tim") || value.contains("whatsapp tim") || value == "secundario" || value == "secundaria" || value == "segundo" || value == "segunda" || value == "linha secundaria" || value == "linha dois" || value == "linha 2" || value == "profissional" ||
             value == "trabalho" || value.contains("perfil profissional") || value.contains("whatsapp profissional") ||
-            value.contains("whatsapp comercial") || value.contains("whatsapp trabalho")
+            value.contains("whatsapp comercial") || value.contains("whatsapp trabalho") || value.contains("perfil secundario") || value.contains("perfil segundo") || value.contains("whatsapp secundario")
     }
 
     private fun handleCommand(raw: String) {
@@ -490,12 +490,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 // Não encerrar a seleção após uma transcrição ambígua: a opção 1
                 // costuma ser transcrita de forma variável pelo reconhecedor.
                 whatsappProfileChoiceRetries++
-                updateStatus("Não identifiquei a opção. Diga PRIMEIRO, PESSOAL ou VIVO para o WhatsApp principal; ou SEGUNDO, PROFISSIONAL ou TIM para o outro WhatsApp.")
+                updateStatus("Não identifiquei a opção. Para o perfil 1, diga Vivo, principal ou primeiro. Para o perfil 2, diga Tim, secundário ou segundo.")
                 if (whatsappProfileChoiceRetries >= 3) {
                     whatsappProfileChoiceRetries = 0
-                    speakAndListenForProfile("Diga UM para o WhatsApp principal ou DOIS para o segundo WhatsApp.")
+                    speakAndListenForProfile("Diga Vivo, principal ou primeiro para o perfil 1; Tim, secundário ou segundo para o perfil 2.")
                 } else {
-                    speakAndListenForProfile("Não entendi. Diga PRIMEIRO ou SEGUNDO.")
+                    speakAndListenForProfile("Não entendi. Diga Vivo, principal ou primeiro; ou Tim, secundário ou segundo.")
                 }
             }
         }
@@ -647,8 +647,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 .replace(Regex("(?i)\\s+(perfil\\s*)?(1|um|primeiro|2|dois|segundo)\\s*$"), "")
                 .replace(Regex("(?i)\\s+(por favor|agora|no whatsapp|pelo whatsapp)$"), "")
                 .trim(' ', '.', ',', '!', '?')
-            val requestedProfile2 = lower.matches(Regex(".*\\b(perfil\\s*2|perfil\\s*dois|segundo perfil|perfil segundo|whatsapp 2|whatsapp dois|segundo whatsapp|profissional|comercial|trabalho)\\b.*"))
-            val requestedProfile1 = lower.matches(Regex(".*\\b(perfil\\s*1|perfil\\s*um|primeiro perfil|perfil primeiro|whatsapp 1|whatsapp um|whatsapp pessoal|pessoal|principal)\\b.*"))
+            val requestedProfile2 = isProfileTwo(lower)
+            val requestedProfile1 = isProfileOne(lower)
             val prefs = getSharedPreferences("aurora_settings", MODE_PRIVATE)
             val profileIndex = when {
                 requestedProfile2 -> 1
@@ -706,15 +706,15 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             openWhatsApp()
         }
 
-        lower.contains("abrir whatsapp") || lower == "whatsapp" -> {
+        lower.contains("abrir whatsapp") || lower == "whatsapp" || lower.contains("qual whatsapp") || lower.contains("qual perfil do whatsapp") || lower.contains("qual whatsapp abrir") -> {
             val prefs = getSharedPreferences("aurora_settings", MODE_PRIVATE)
             val profile1Enabled = prefs.getBoolean("profile_1_enabled", true)
             val profile2Enabled = prefs.getBoolean("profile_2_enabled", false)
             if (profile1Enabled && profile2Enabled) {
                 awaitingWhatsAppProfileChoice = true
                 whatsappProfileChoiceRetries = 0
-                updateStatus("Aguardando escolha: diga UM para o WhatsApp principal ou DOIS para o segundo WhatsApp.")
-                speakAndListenForProfile("Diga UM para o WhatsApp principal ou DOIS para o segundo WhatsApp.")
+                updateStatus("Aguardando escolha: perfil 1 (Vivo, principal, primeiro) ou perfil 2 (Tim, secundário, segundo).")
+                speakAndListenForProfile("Qual WhatsApp deseja abrir? Diga perfil um, Vivo, principal ou primeiro; ou perfil dois, Tim, secundário ou segundo.")
             } else if (profile2Enabled && !profile1Enabled) {
                 openWhatsAppProfile2()
             } else {
