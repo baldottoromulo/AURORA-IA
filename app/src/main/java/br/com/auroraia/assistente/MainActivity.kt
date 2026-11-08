@@ -1308,16 +1308,20 @@ private fun openWazeDestination(destination: String) {
                 val international = if (digits.startsWith("55")) digits else "55$digits"
                 val url = Uri.parse("https://wa.me/$international?text=" + Uri.encode(preview.text.toString()))
                 try {
+                    // Não remover setPackage no fallback: isso abriria o seletor do
+                    // Android e poderia apresentar os dois WhatsApps, contrariando
+                    // a escolha de perfil feita antes do ditado.
                     val intent = Intent(Intent.ACTION_VIEW, url).setPackage(packageName)
-                    startActivity(intent)
-                    updateStatus("Conversa de $name aberta com o texto preenchido. Revise e toque em Enviar no WhatsApp.")
-                } catch (_: Exception) {
-                    try {
-                        startActivity(Intent(Intent.ACTION_VIEW, url))
-                        updateStatus("Conversa preparada. Confira o aplicativo aberto e toque em Enviar; nada foi enviado automaticamente.")
-                    } catch (_: Exception) {
-                        updateStatus("Não foi possível abrir a conversa do WhatsApp.")
+                    if (intent.resolveActivity(packageManager) == null) {
+                        updateStatus("O WhatsApp escolhido não aceitou a abertura direta desta conversa. Nenhum outro WhatsApp será aberto automaticamente. Confira se o perfil selecionado está instalado e ativo.")
+                        speak("Não consegui abrir a conversa no perfil escolhido. Não vou abrir outro WhatsApp por engano.")
+                        return@setPositiveButton
                     }
+                    startActivity(intent)
+                    updateStatus("Conversa de $name aberta no aplicativo selecionado com o texto preenchido. Revise e toque em Enviar no WhatsApp.")
+                } catch (_: Exception) {
+                    updateStatus("Não foi possível abrir a conversa no WhatsApp selecionado. Nenhuma mensagem foi enviada.")
+                    speak("Não foi possível abrir a conversa no perfil escolhido.")
                 }
             }
             .show()
