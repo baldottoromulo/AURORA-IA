@@ -812,7 +812,7 @@ private fun openWazeDestination(destination: String) {
     }
 
     private fun hasPendingVoiceChoice(): Boolean =
-        awaitingWhatsAppProfileChoice || awaitingCallConfirmation || awaitingCallChoice || awaitingPhoneChoice || awaitingMessageContactChoice || awaitingMessageDictation
+        awaitingWhatsAppProfileChoice || awaitingCallConfirmation || awaitingCallChoice || awaitingPhoneChoice || awaitingMessageContactChoice || awaitingMessageRecipientRetry || awaitingMessageDictation
 
     private fun speakAndListenForProfile(message: String) {
         // Invalida a escuta anterior antes da fala, evitando que um callback antigo
