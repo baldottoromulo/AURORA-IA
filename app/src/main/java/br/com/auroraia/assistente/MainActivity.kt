@@ -450,16 +450,41 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             isProfileOne(choice) -> {
                 awaitingWhatsAppProfileChoice = false
                 whatsappProfileChoiceRetries = 0
-                updateStatus("Ok, perfil 1.")
-                speak("Ok, perfil um.")
-                openWhatsApp()
+                val pendingRecipient = pendingMessageRecipientName
+                if (!pendingRecipient.isNullOrBlank()) {
+                    val prefs = getSharedPreferences("aurora_settings", MODE_PRIVATE)
+                    val packageName = prefs.getString("profile_1_package", null)
+                        ?.takeIf { it == "com.whatsapp" || it == "com.whatsapp.w4b" }
+                        ?: prefs.getString("whatsapp_package", "com.whatsapp") ?: "com.whatsapp"
+                    pendingMessageWhatsAppPackage = packageName
+                    updateStatus("Perfil 1 selecionado para $pendingRecipient.")
+                    beginWhatsAppMessage(pendingRecipient, packageName)
+                } else {
+                    updateStatus("Ok, perfil 1.")
+                    speak("Ok, perfil um.")
+                    openWhatsApp()
+                }
             }
             isProfileTwo(choice) -> {
                 awaitingWhatsAppProfileChoice = false
                 whatsappProfileChoiceRetries = 0
-                updateStatus("Ok, perfil 2.")
-                speak("Ok, perfil dois.")
-                openWhatsAppProfile2()
+                val pendingRecipient = pendingMessageRecipientName
+                if (!pendingRecipient.isNullOrBlank()) {
+                    val prefs = getSharedPreferences("aurora_settings", MODE_PRIVATE)
+                    if (!prefs.getBoolean("profile_2_enabled", false)) {
+                        updateStatus("O perfil 2 está desativado. Ative-o nas configurações.")
+                        speak("O perfil dois está desativado.")
+                        return
+                    }
+                    val packageName = prefs.getString("profile_2_package", "com.whatsapp") ?: "com.whatsapp"
+                    pendingMessageWhatsAppPackage = packageName
+                    updateStatus("Perfil 2 selecionado para $pendingRecipient.")
+                    beginWhatsAppMessage(pendingRecipient, packageName)
+                } else {
+                    updateStatus("Ok, perfil 2.")
+                    speak("Ok, perfil dois.")
+                    openWhatsAppProfile2()
+                }
             }
             else -> {
                 // Não encerrar a seleção após uma transcrição ambígua: a opção 1
@@ -550,7 +575,13 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     val asksWhatsApp = lower.contains("whatsapp") || lower == "vivo" || lower == "tim" ||
         lower == "pessoal" || lower == "profissional" || lower == "trabalho" ||
         lower == "primeiro" || lower == "segundo" || lower.contains("perfil 1") || lower.contains("perfil 2")
-    val asksMessage = lower.startsWith("preparar mensagem:") || lower.startsWith("corrigir mensagem:")
+    val messageVerbs = listOf("enviar mensagem", "envie mensagem", "manda mensagem", "mandar mensagem", "mande mensagem", "enviar um whatsapp", "mandar um whatsapp", "escrever para", "falar com")
+    val asksMessage = lower.startsWith("preparar mensagem:") ||
+        lower.startsWith("corrigir mensagem:") ||
+        (lower.contains("mensagem") && lower.contains("para ") &&
+            (messageVerbs.any { lower.contains(it) } || lower.contains("whatsapp") || lower.startsWith("mensagem para "))) ||
+        (lower.contains("whatsapp") && lower.contains("para ") &&
+            listOf("enviar", "envie", "manda", "mandar", "mande", "escreva", "preparar").any { lower.contains(it) })
     val asksDialer = lower.startsWith("ligar para ") || lower.startsWith("ligue para ")
 
     if (asksWaze && !settings.getBoolean("waze_enabled", true)) {
@@ -609,15 +640,50 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             }
         }
 
-        lower.contains("mensagem") && lower.contains("whatsapp") && lower.contains("para ") -> {
-            val recipient = command.substringAfter("para", "").trim()
-                .replace(Regex("(?i)\\s+(por favor|agora)$"), "").trim()
+        asksMessage && !lower.startsWith("preparar mensagem:") && !lower.startsWith("corrigir mensagem:") -> {
+            var recipient = command.substringAfter("para", "").trim()
+            recipient = recipient
+                .replace(Regex("(?i)\\s+(no|na|pelo|pela)\\s+perfil\\s+(1|um|primeiro|2|dois|segundo)\\s*$"), "")
+                .replace(Regex("(?i)\\s+(perfil\\s*)?(1|um|primeiro|2|dois|segundo)\\s*$"), "")
+                .replace(Regex("(?i)\\s+(por favor|agora|no whatsapp|pelo whatsapp)$"), "")
+                .trim(' ', '.', ',', '!', '?')
+            val requestedProfile2 = lower.matches(Regex(".*\\b(perfil\\s*2|perfil\\s*dois|segundo perfil|perfil segundo|whatsapp 2|whatsapp dois|segundo whatsapp|profissional|comercial|trabalho)\\b.*"))
+            val requestedProfile1 = lower.matches(Regex(".*\\b(perfil\\s*1|perfil\\s*um|primeiro perfil|perfil primeiro|whatsapp 1|whatsapp um|whatsapp pessoal|pessoal|principal)\\b.*"))
+            val prefs = getSharedPreferences("aurora_settings", MODE_PRIVATE)
+            val profileIndex = when {
+                requestedProfile2 -> 1
+                requestedProfile1 -> 0
+                prefs.getBoolean("profile_1_enabled", true) && prefs.getBoolean("profile_2_enabled", false) -> -1
+                prefs.getBoolean("profile_2_enabled", false) && !prefs.getBoolean("profile_1_enabled", true) -> 1
+                else -> 0
+            }
             if (recipient.isBlank()) {
                 updateStatus("Diga o nome do contato para a mensagem.")
                 speak("Para quem você deseja enviar a mensagem?")
                 return
             }
-            beginWhatsAppMessage(recipient, if (lower.contains("profissional") || lower.contains("comercial") || lower.contains("segundo")) "com.whatsapp.w4b" else "com.whatsapp")
+            if (profileIndex == -1) {
+                pendingMessageRecipientName = recipient
+                awaitingWhatsAppProfileChoice = true
+                whatsappProfileChoiceRetries = 0
+                updateStatus("Destinatário: $recipient. Escolha o perfil 1 ou perfil 2.")
+                speakAndListenForProfile("Para enviar a mensagem a $recipient, diga perfil um ou perfil dois.")
+                return
+            }
+            if (profileIndex == 1 && !prefs.getBoolean("profile_2_enabled", false)) {
+                updateStatus("O perfil 2 está desativado. Ative-o nas configurações.")
+                speak("O perfil dois está desativado.")
+                return
+            }
+            if (profileIndex == 0 && !prefs.getBoolean("profile_1_enabled", true)) {
+                updateStatus("O perfil 1 está desativado. Ative-o nas configurações.")
+                speak("O perfil um está desativado.")
+                return
+            }
+            val packageName = prefs.getString("profile_${profileIndex + 1}_package", null)
+                ?.takeIf { it == "com.whatsapp" || it == "com.whatsapp.w4b" }
+                ?: if (profileIndex == 0) prefs.getString("whatsapp_package", "com.whatsapp") ?: "com.whatsapp" else "com.whatsapp"
+            beginWhatsAppMessage(recipient, packageName)
         }
 
         (lower.contains("whatsapp") && (lower.contains("tim") || lower.contains("perfil 2") || lower.contains("perfil dois"))) ||
