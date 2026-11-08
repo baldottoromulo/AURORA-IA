@@ -443,7 +443,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             speak("Mensagem cancelada.")
             return
         }
-        val finishPhrases = listOf("finalizar mensagem", "concluir mensagem", "terminar mensagem", "encerrar ditado", "finalizar ditado", "pronto", "terminei")
+        val finishPhrases = listOf("finalizar mensagem", "concluir mensagem", "terminar mensagem", "encerrar ditado", "finalizar ditado")
         val finishPhrase = finishPhrases.firstOrNull { normalized.endsWith(it) }
         val segment = if (finishPhrase != null) spoken.dropLast(finishPhrase.length).trim() else spoken
         if (segment.isNotBlank()) {
