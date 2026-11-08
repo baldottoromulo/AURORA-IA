@@ -49,6 +49,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var awaitingMessageRecipientRetry = false
     private var messageContactChoices: List<ContactChoice> = emptyList()
     private var awaitingMessageDictation = false
+    private var pendingMessageDraft = StringBuilder()
     private var pendingMessageRecipientName: String? = null
     private var pendingMessageRecipientNumber: String? = null
     private var pendingMessageWhatsAppPackage: String? = null
@@ -236,7 +237,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 commandText.text = "Você disse: $spoken"
                 handleCommand(spoken)
             }
-            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onPartialResults(partialResults: Bundle?) {
+                if (activeSessionId != speechSessionId || !awaitingMessageDictation) return
+                val partial = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+                if (partial.isNotBlank()) updateStatus("Ditando: ${pendingMessageDraft} ${partial}".trim())
+            }
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
 
@@ -258,9 +263,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 10)
             // A escolha de perfil precisa de uma janela maior: respostas curtas como
             // "Vivo", "TIM" e "primeiro" não podem ser cortadas por silêncio precoce.
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, if (awaitingWhatsAppProfileChoice) 2500L else 1500L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, if (awaitingWhatsAppProfileChoice) 8000L else 3500L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, if (awaitingWhatsAppProfileChoice) 12000L else 6000L)
+            val dictating = awaitingMessageDictation
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, when { dictating -> 5000L; awaitingWhatsAppProfileChoice -> 2500L; else -> 1500L })
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, when { dictating -> 10000L; awaitingWhatsAppProfileChoice -> 8000L; else -> 5000L })
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, when { dictating -> 15000L; awaitingWhatsAppProfileChoice -> 12000L; else -> 8000L })
         }
         try {
             speechRecognizer?.startListening(intent)
@@ -425,21 +431,45 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     if (awaitingMessageDictation) {
-        val message = raw.trim()
-        awaitingMessageDictation = false
-        if (message.isBlank() || message.equals("cancelar", true)) {
+        val spoken = raw.trim()
+        val normalized = normalizeVoiceChoice(spoken)
+        if (normalized in setOf("cancelar", "cancela", "desistir", "cancelar mensagem")) {
+            awaitingMessageDictation = false
+            pendingMessageDraft.clear()
             pendingMessageRecipientName = null
             pendingMessageRecipientNumber = null
             pendingMessageWhatsAppPackage = null
             updateStatus("Preparação da mensagem cancelada.")
             speak("Mensagem cancelada.")
+            return
+        }
+        val finishPhrases = listOf("finalizar mensagem", "concluir mensagem", "terminar mensagem", "encerrar ditado", "finalizar ditado", "pronto", "terminei")
+        val finishPhrase = finishPhrases.firstOrNull { normalized.endsWith(it) }
+        val segment = if (finishPhrase != null) spoken.dropLast(finishPhrase.length).trim() else spoken
+        if (segment.isNotBlank()) {
+            if (pendingMessageDraft.isNotEmpty()) pendingMessageDraft.append(" ")
+            pendingMessageDraft.append(segment)
+        }
+        if (finishPhrase != null) {
+            val completeMessage = pendingMessageDraft.toString().trim()
+            awaitingMessageDictation = false
+            if (completeMessage.isBlank()) {
+                updateStatus("Ainda não há texto para revisar. Continue ditando ou diga cancelar.")
+                awaitingMessageDictation = true
+                startListening()
+            } else {
+                showWhatsAppMessageReview(
+                    pendingMessageRecipientName.orEmpty(),
+                    pendingMessageRecipientNumber.orEmpty(),
+                    pendingMessageWhatsAppPackage ?: "com.whatsapp",
+                    completeMessage
+                )
+            }
         } else {
-            showWhatsAppMessageReview(
-                pendingMessageRecipientName.orEmpty(),
-                pendingMessageRecipientNumber.orEmpty(),
-                pendingMessageWhatsAppPackage ?: "com.whatsapp",
-                message
-            )
+            updateStatus("Texto acumulado: ${pendingMessageDraft}. Continue ditando. Para revisar, diga ‘finalizar mensagem’. Para apagar, diga ‘cancelar’. ")
+            // Cada pausa encerra apenas um trecho de reconhecimento; o texto acumulado
+            // permanece e uma nova janela de ditado é iniciada automaticamente.
+            window.decorView.postDelayed({ if (awaitingMessageDictation) startListening() }, 300L)
         }
         return
     }
@@ -1237,11 +1267,12 @@ private fun openWazeDestination(destination: String) {
         }
         pendingMessageRecipientName = contact.name
         pendingMessageRecipientNumber = selectedPhone.number
+        pendingMessageDraft.clear()
         awaitingMessageDictation = true
-        updateStatus("Destinatário selecionado: ${contact.name}. Agora dite a mensagem.")
+        updateStatus("Destinatário selecionado: ${contact.name}. Agora dite a mensagem. Você pode fazer pausas; diga ‘finalizar mensagem’ quando terminar.")
         speakAndListenForProfile(
             "Destinatário selecionado: ${contact.name}. " +
-                "Vou usar o telefone ${selectedPhone.label}. Dite agora o texto da mensagem."
+                "Vou usar o telefone ${selectedPhone.label}. Dite sua mensagem. Pode fazer pausas e continuar; quando terminar, diga finalizar mensagem."
         )
     }
 
