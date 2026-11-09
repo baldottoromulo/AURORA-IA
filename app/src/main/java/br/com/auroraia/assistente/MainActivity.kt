@@ -34,6 +34,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var statusText: TextView
     private lateinit var commandText: TextView
     private lateinit var listenButton: Button
+    private lateinit var finishMessageButton: Button
     private lateinit var keyguardManager: KeyguardManager
     private var awaitingWhatsAppProfileChoice = false
     private var whatsappProfileChoiceRetries = 0
@@ -105,6 +106,13 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setOnClickListener { startListening() }
         }
 
+        finishMessageButton = Button(this).apply {
+            text = "CONCLUIR DITADO E REVISAR"
+            textSize = 15f
+            visibility = android.view.View.GONE
+            setOnClickListener { finishMessageDictation() }
+        }
+
         val whatsappSettingsButton = Button(this).apply {
             text = "⚙  ESCOLHER WHATSAPP"
             textSize = 15f
@@ -124,6 +132,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         outer.addView(statusText, matchWrap())
         outer.addView(commandText, matchWrap())
         outer.addView(listenButton, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        outer.addView(finishMessageButton, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ))
         outer.addView(whatsappSettingsButton, LinearLayout.LayoutParams(
@@ -435,6 +446,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val normalized = normalizeVoiceChoice(spoken)
         if (normalized in setOf("cancelar", "cancela", "desistir", "cancelar mensagem")) {
             awaitingMessageDictation = false
+            finishMessageButton.visibility = android.view.View.GONE
             pendingMessageDraft.clear()
             pendingMessageRecipientName = null
             pendingMessageRecipientNumber = null
@@ -450,22 +462,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             if (pendingMessageDraft.isNotEmpty()) pendingMessageDraft.append(" ")
             pendingMessageDraft.append(segment)
         }
-        if (finishPhrase != null) {
-            val completeMessage = pendingMessageDraft.toString().trim()
-            awaitingMessageDictation = false
-            if (completeMessage.isBlank()) {
-                updateStatus("Ainda não há texto para revisar. Continue ditando ou diga cancelar.")
-                awaitingMessageDictation = true
-                startListening()
+            if (finishPhrase != null) {
+                finishMessageDictation()
             } else {
-                showWhatsAppMessageReview(
-                    pendingMessageRecipientName.orEmpty(),
-                    pendingMessageRecipientNumber.orEmpty(),
-                    pendingMessageWhatsAppPackage ?: "com.whatsapp",
-                    completeMessage
-                )
-            }
-        } else {
             updateStatus("Texto acumulado: ${pendingMessageDraft}. Continue ditando. Para revisar, diga ‘finalizar mensagem’. Para apagar, diga ‘cancelar’. ")
             // Cada pausa encerra apenas um trecho de reconhecimento; o texto acumulado
             // permanece e uma nova janela de ditado é iniciada automaticamente.
@@ -1269,10 +1268,34 @@ private fun openWazeDestination(destination: String) {
         pendingMessageRecipientNumber = selectedPhone.number
         pendingMessageDraft.clear()
         awaitingMessageDictation = true
+        finishMessageButton.visibility = android.view.View.VISIBLE
         updateStatus("Destinatário selecionado: ${contact.name}. Agora dite a mensagem. Você pode fazer pausas; diga ‘finalizar mensagem’ quando terminar.")
         speakAndListenForProfile(
             "Destinatário selecionado: ${contact.name}. " +
                 "Vou usar o telefone ${selectedPhone.label}. Dite sua mensagem. Pode fazer pausas e continuar; quando terminar, diga finalizar mensagem."
+        )
+    }
+
+    private fun finishMessageDictation() {
+        if (!awaitingMessageDictation) return
+        awaitingMessageDictation = false
+        finishMessageButton.visibility = android.view.View.GONE
+        // Invalida callbacks da sessão de voz ativa antes de interrompê-la.
+        speechSessionId++
+        speechRecognizer?.cancel()
+        val completeMessage = pendingMessageDraft.toString().trim()
+        if (completeMessage.isBlank()) {
+            updateStatus("Nenhum texto foi reconhecido. Dite a mensagem novamente ou cancele.")
+            awaitingMessageDictation = true
+            finishMessageButton.visibility = android.view.View.VISIBLE
+            startListening()
+            return
+        }
+        showWhatsAppMessageReview(
+            pendingMessageRecipientName.orEmpty(),
+            pendingMessageRecipientNumber.orEmpty(),
+            pendingMessageWhatsAppPackage ?: "com.whatsapp",
+            completeMessage
         )
     }
 
