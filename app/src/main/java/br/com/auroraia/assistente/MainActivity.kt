@@ -241,6 +241,13 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                         candidates.firstOrNull { resolveListChoice(it, messageContactChoices.size) != null ||
                             messageContactChoices.any { contact -> normalizeVoiceChoice(contact.name) == normalizeVoiceChoice(it) } }
                             ?: candidates.firstOrNull().orEmpty()
+                    awaitingMessageDictation ->
+                        candidates.firstOrNull {
+                            val normalized = normalizeVoiceChoice(it)
+                            normalized in setOf("cancelar", "cancela", "desistir", "cancelar mensagem") ||
+                                listOf("finalizar mensagem", "concluir mensagem", "terminar mensagem", "encerrar ditado", "finalizar ditado")
+                                    .any { phrase -> normalized.endsWith(phrase) }
+                        } ?: candidates.firstOrNull().orEmpty()
                     awaitingCallConfirmation ->
                         candidates.firstOrNull { isYes(it) || isNo(it) } ?: candidates.firstOrNull().orEmpty()
                     else -> candidates.firstOrNull().orEmpty()
