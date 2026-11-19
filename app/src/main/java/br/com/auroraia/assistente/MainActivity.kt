@@ -144,7 +144,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setTextColor(0xFFFFFFFF.toInt())
             backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF176B78.toInt())
             minHeight = dp(58)
-            setOnClickListener { openWhatsApp() }
+            setOnClickListener { handleCommand("abrir WhatsApp") }
         }
         val wazeButton = Button(this).apply {
             text = "Waze"
@@ -153,7 +153,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setTextColor(0xFFFFFFFF.toInt())
             backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF345A91.toInt())
             minHeight = dp(58)
-            setOnClickListener { openWaze() }
+            setOnClickListener { handleCommand("abrir Waze") }
         }
         actions.addView(whatsappButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             marginEnd = dp(5)
