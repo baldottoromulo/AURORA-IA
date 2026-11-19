@@ -67,85 +67,137 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val outer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(28, 34, 28, 24)
-            setBackgroundColor(0xFF0B1020.toInt())
+            setPadding(dp(18), dp(18), dp(18), dp(16))
+            setBackgroundColor(0xFF0B1220.toInt())
         }
 
-        val title = TextView(this).apply {
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dp(10))
+        }
+        header.addView(TextView(this).apply {
             text = "AURORA IA"
-            textSize = 30f
-            setTextColor(0xFF77D8FF.toInt())
+            textSize = 29f
+            setTextColor(0xFF72D9E8.toInt())
             gravity = Gravity.CENTER
-        }
-        val subtitle = TextView(this).apply {
-            text = "Seu assistente pessoal"
-            textSize = 16f
-            setTextColor(0xFFE4ECF7.toInt())
-            gravity = Gravity.CENTER
-            setPadding(0, 8, 0, 28)
-        }
-
-        statusText = TextView(this).apply {
+            letterSpacing = 0.04f
+        }, matchWrap())
+        header.addView(TextView(this).apply {
+            text = "Sua assistente pessoal"
             textSize = 15f
-            setTextColor(0xFFB9C8DD.toInt())
+            setTextColor(0xFFB9C8D8.toInt())
             gravity = Gravity.CENTER
-            setPadding(12, 16, 12, 18)
+        }, matchWrap())
+
+        val statusPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xFF17283A.toInt())
+                cornerRadius = dp(14).toFloat()
+            }
         }
+        statusText = TextView(this).apply {
+            text = "Pronta para receber comandos"
+            textSize = 14f
+            setTextColor(0xFFD4E5F0.toInt())
+            gravity = Gravity.CENTER
+        }
+        statusPanel.addView(statusText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
         commandText = TextView(this).apply {
-            text = "Exemplos: “abrir Waze”, “abrir WhatsApp”, “preparar mensagem: ...”"
-            textSize = 16f
-            setTextColor(0xFFFFFFFF.toInt())
+            text = "Toque no microfone e diga o que precisa."
+            textSize = 14f
+            setTextColor(0xFFB9C8D8.toInt())
             gravity = Gravity.CENTER
-            setPadding(14, 20, 14, 24)
+            setPadding(dp(8), dp(12), dp(8), dp(12))
         }
 
         listenButton = Button(this).apply {
             text = "🎙  FALAR COM A AURORA"
-            textSize = 16f
+            textSize = 17f
+            isAllCaps = false
+            setTextColor(0xFF061522.toInt())
+            backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF62D5E3.toInt())
+            minHeight = dp(66)
             setOnClickListener { startListening() }
         }
 
         finishMessageButton = Button(this).apply {
-            text = "CONCLUIR DITADO E REVISAR"
+            text = "Concluir ditado e revisar"
             textSize = 15f
+            isAllCaps = false
             visibility = android.view.View.GONE
             setOnClickListener { finishMessageDictation() }
         }
 
-        val whatsappSettingsButton = Button(this).apply {
-            text = "⚙  ESCOLHER WHATSAPP"
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val whatsappButton = Button(this).apply {
+            text = "WhatsApp"
             textSize = 15f
+            isAllCaps = false
+            setTextColor(0xFFFFFFFF.toInt())
+            backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF176B78.toInt())
+            minHeight = dp(58)
+            setOnClickListener { openWhatsApp() }
+        }
+        val wazeButton = Button(this).apply {
+            text = "Waze"
+            textSize = 15f
+            isAllCaps = false
+            setTextColor(0xFFFFFFFF.toInt())
+            backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF345A91.toInt())
+            minHeight = dp(58)
+            setOnClickListener { openWaze() }
+        }
+        actions.addView(whatsappButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginEnd = dp(5)
+        })
+        actions.addView(wazeButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginStart = dp(5)
+        })
+
+        val settingsButton = Button(this).apply {
+            text = "⚙  Configurações"
+            textSize = 14f
+            isAllCaps = false
+            setTextColor(0xFFD8E8F2.toInt())
+            backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF26384C.toInt())
+            minHeight = dp(52)
             setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
         }
 
-        val help = TextView(this).apply {
-            text = "SEGURANÇA ATIVA\nNão desbloqueia o aparelho. Não possui comando para abrir bancos. Mensagens não são enviadas automaticamente."
-            textSize = 13f
-            setTextColor(0xFF9FE7C2.toInt())
+        val safety = TextView(this).apply {
+            text = "PROTEÇÃO PERMANENTE  •  Aplicativos bancários bloqueados  •  Sem desbloqueio do aparelho  •  Sem envio automático"
+            textSize = 11f
+            setTextColor(0xFF83D9B5.toInt())
             gravity = Gravity.CENTER
-            setPadding(8, 26, 8, 8)
+            setPadding(dp(6), dp(12), dp(6), dp(2))
         }
 
-        outer.addView(title, matchWrap())
-        outer.addView(subtitle, matchWrap())
-        outer.addView(statusText, matchWrap())
+        outer.addView(header, matchWrap())
+        outer.addView(statusPanel, matchWrap())
         outer.addView(commandText, matchWrap())
         outer.addView(listenButton, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
-        outer.addView(finishMessageButton, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
-        outer.addView(whatsappSettingsButton, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
-        outer.addView(help, matchWrap())
+        ).apply { bottomMargin = dp(8) })
+        outer.addView(finishMessageButton, matchWrap())
+        outer.addView(actions, matchWrap())
+        outer.addView(settingsButton, matchWrap())
+        outer.addView(safety, matchWrap())
 
-        val scroll = ScrollView(this).apply { addView(outer) }
-        setContentView(scroll)
+        setContentView(ScrollView(this).apply {
+            isFillViewport = true
+            addView(outer)
+        })
     }
 
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
     private fun matchWrap() = LinearLayout.LayoutParams(
         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
     )
@@ -391,6 +443,30 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             value == "tim" || value.contains("linha tim") || value.contains("whatsapp tim") || value == "secundario" || value == "secundaria" || value == "segundo" || value == "segunda" || value == "linha secundaria" || value == "linha dois" || value == "linha 2" || value == "profissional" ||
             value == "trabalho" || value.contains("perfil profissional") || value.contains("whatsapp profissional") ||
             value.contains("whatsapp comercial") || value.contains("whatsapp trabalho") || value.contains("perfil secundario") || value.contains("perfil segundo") || value.contains("whatsapp secundario")
+    }
+
+    // Bloqueio explícito de comandos para abrir ou acessar aplicativos financeiros.
+    // A AURORA não possui e não deverá receber uma função genérica de abertura de apps.
+    private fun isBankingAppRequest(command: String): Boolean {
+        val value = normalizeVoiceChoice(command)
+        val action = listOf("abrir", "abra", "abre", "acessar", "acesse", "entrar", "entre",
+            "iniciar", "inicie", "executar", "rodar", "ir para", "meu banco", "aplicativo",
+            "app", "banco", "carteira", "pix").any { value.contains(it) }
+        if (!action) return false
+
+        val financialTargets = listOf(
+            "banco do brasil", "caixa", "bradesco", "itau", "santander", "nubank",
+            "nu pagamentos", "banco inter", "inter", "c6 bank", "picpay", "mercado pago",
+            "mercado livre", "pagbank", "pagseguro", "iti", "neon", "next", "btg",
+            "xp investimentos", "sicredi", "sicoob", "safra", "banco pan", "banrisul",
+            "banestes", "banese", "banco bv", "bv financeira", "daycoval", "will bank",
+            "original", "stone", "infinitepay", "recargapay", "99pay"
+        )
+        val explicitBankTerms = listOf("aplicativo bancario", "app bancario", "app do banco",
+            "aplicativo do banco", "internet banking", "conta bancaria", "carteira digital",
+            "abrir pix", "fazer pix", "acessar pix")
+        return value.contains("banco") || explicitBankTerms.any { value.contains(it) } ||
+            financialTargets.any { value.contains(it) }
     }
 
     private fun handleCommand(raw: String) {
@@ -642,10 +718,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     when {
-        lower.contains("abrir banco") ||
-        lower.contains("abre banco") ||
-        lower.contains("aplicativo bancário") ||
-        lower.contains("meu banco") -> {
+        isBankingAppRequest(lower) -> {
             updateStatus("Bloqueado por segurança: a AURORA IA não abre aplicativos bancários.")
             speak("Por segurança, não posso abrir aplicativos bancários.")
         }
