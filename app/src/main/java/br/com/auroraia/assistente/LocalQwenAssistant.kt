@@ -24,9 +24,11 @@ class LocalQwenAssistant(context: Context) {
     companion object {
         const val MODEL_FILE = "Qwen3-1.7B_dynamic_wi4b32_afp32.litertlm"
         const val MODEL_BYTES_MIN = 900L * 1024L * 1024L
+        const val MODEL_EXPECTED_BYTES = 977184032L
         const val MODEL_SHA256 = "2eeffef7b51bc3e1225ea69fe7aa5f417397934b56a5b6c20cc068d6fd2c918b"
+        // Revision pinned to the original Xet object whose SHA-256 and size are published by Hugging Face.
         const val MODEL_URL =
-            "https://huggingface.co/litert-community/Qwen3-1.7B/resolve/main/Qwen3-1.7B_dynamic_wi4b32_afp32.litertlm"
+            "https://huggingface.co/litert-community/Qwen3-1.7B/resolve/d9b8a9126e5ac18591306eacd4311ba43b92421e/Qwen3-1.7B_dynamic_wi4b32_afp32.litertlm?download=true"
     }
 
     private val appContext = context.applicationContext
@@ -60,53 +62,92 @@ class LocalQwenAssistant(context: Context) {
                 }
 
                 val partial = File(parent, "$MODEL_FILE.part")
-                if (partial.exists()) partial.delete()
+                var verified = false
+                var lastFailure = "Falha desconhecida no download."
 
-                val connection = (URL(MODEL_URL).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 30000
-                    readTimeout = 60000
-                    instanceFollowRedirects = true
-                    requestMethod = "GET"
-                    setRequestProperty("User-Agent", "AURORA-IA-Android")
-                }
+                // Each attempt starts a fresh request so Hugging Face can issue a new Xet URL.
+                for (attempt in 1..3) {
+                    if (partial.exists() && !partial.delete()) {
+                        error("Não foi possível limpar o arquivo temporário para uma nova tentativa.")
+                    }
+                    try {
+                        val connection = (URL(MODEL_URL).openConnection() as HttpURLConnection).apply {
+                            connectTimeout = 30000
+                            readTimeout = 120000
+                            instanceFollowRedirects = true
+                            requestMethod = "GET"
+                            setRequestProperty("User-Agent", "AURORA-IA-Android")
+                            setRequestProperty("Accept", "application/octet-stream")
+                            setRequestProperty("Accept-Encoding", "identity")
+                            setRequestProperty("Cache-Control", "no-cache")
+                        }
 
-                try {
-                    connection.connect()
-                    val response = connection.responseCode
-                    if (response !in 200..299) error("Servidor do modelo respondeu HTTP $response.")
-                    val total = connection.contentLengthLong
-                    connection.inputStream.use { input ->
-                        FileOutputStream(partial).use { output ->
-                            val buffer = ByteArray(64 * 1024)
-                            var downloaded = 0L
-                            var lastPercent = -1
-                            while (true) {
-                                val count = input.read(buffer)
-                                if (count < 0) break
-                                output.write(buffer, 0, count)
-                                downloaded += count
-                                val percent = if (total > 0) ((downloaded * 100) / total).toInt().coerceIn(0, 99) else -1
-                                if (percent != lastPercent && percent >= 0) {
-                                    lastPercent = percent
-                                    val detail = "${downloaded / (1024 * 1024)} MB de ${total / (1024 * 1024)} MB"
-                                    mainHandler.post { onProgress(percent, detail) }
+                        try {
+                            connection.connect()
+                            val response = connection.responseCode
+                            if (response !in 200..299) {
+                                error("Servidor do modelo respondeu HTTP $response.")
+                            }
+                            val contentType = connection.contentType.orEmpty().lowercase()
+                            if (contentType.contains("text/html") || contentType.contains("application/json")) {
+                                error("O servidor retornou uma página ou resposta de erro, não o arquivo do modelo.")
+                            }
+                            val total = connection.contentLengthLong
+                            if (total > 0L && total != MODEL_EXPECTED_BYTES) {
+                                error("Tamanho informado pelo servidor diferente do modelo oficial ($total bytes).")
+                            }
+
+                            connection.inputStream.use { input ->
+                                FileOutputStream(partial).use { output ->
+                                    val buffer = ByteArray(256 * 1024)
+                                    var downloaded = 0L
+                                    var lastPercent = -1
+                                    while (true) {
+                                        val count = input.read(buffer)
+                                        if (count < 0) break
+                                        output.write(buffer, 0, count)
+                                        downloaded += count
+                                        val percent = ((downloaded * 100) / MODEL_EXPECTED_BYTES)
+                                            .toInt().coerceIn(0, 99)
+                                        if (percent != lastPercent) {
+                                            lastPercent = percent
+                                            val detail = "${downloaded / (1024 * 1024)} MB de ${MODEL_EXPECTED_BYTES / (1024 * 1024)} MB (tentativa $attempt/3)"
+                                            mainHandler.post { onProgress(percent, detail) }
+                                        }
+                                    }
+                                    output.fd.sync()
                                 }
                             }
-                            output.fd.sync()
+                        } finally {
+                            connection.disconnect()
+                        }
+
+                        val actualBytes = partial.length()
+                        if (actualBytes != MODEL_EXPECTED_BYTES) {
+                            error("Download incompleto: recebidos $actualBytes bytes; esperado $MODEL_EXPECTED_BYTES.")
+                        }
+
+                        val digest = sha256(partial)
+                        if (!digest.equals(MODEL_SHA256, ignoreCase = true)) {
+                            error("SHA-256 divergente. Recebido: ${digest.take(16)}…; esperado: ${MODEL_SHA256.take(16)}….")
+                        }
+
+                        verified = true
+                        break
+                    } catch (failure: Throwable) {
+                        lastFailure = failure.message ?: failure.javaClass.simpleName
+                        if (partial.exists()) partial.delete()
+                        if (attempt < 3) {
+                            mainHandler.post {
+                                onProgress(0, "Falha na tentativa $attempt/3. Preparando novo download…")
+                            }
+                            Thread.sleep(1500L * attempt)
                         }
                     }
-                } finally {
-                    connection.disconnect()
                 }
 
-                if (partial.length() < MODEL_BYTES_MIN) {
-                    partial.delete()
-                    error("O download terminou incompleto. Tente novamente com uma conexão estável.")
-                }
-                val digest = sha256(partial)
-                if (!digest.equals(MODEL_SHA256, ignoreCase = true)) {
-                    partial.delete()
-                    error("A verificação de integridade do modelo falhou. O arquivo foi descartado.")
+                if (!verified) {
+                    error("Não foi possível validar o modelo após 3 tentativas. $lastFailure Verifique a conexão e tente novamente.")
                 }
                 if (modelFile.exists() && !modelFile.delete()) error("Não foi possível substituir o modelo antigo.")
                 if (!partial.renameTo(modelFile)) error("Não foi possível finalizar a instalação do modelo.")
