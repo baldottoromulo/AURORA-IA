@@ -1,9 +1,13 @@
 package br.com.auroraia.assistente
 
 import android.content.Context
+import android.content.ContentValues
+import android.net.Uri
+import android.provider.MediaStore
 import android.os.Handler
 import android.os.Looper
 import android.os.StatFs
+import android.os.Environment
 import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
@@ -46,6 +50,7 @@ class LocalQwenAssistant(context: Context) {
         onComplete: (Result<File>) -> Unit
     ) {
         worker.execute {
+            var publicDownloadUri: Uri? = null
             try {
                 if (isModelInstalled() && sha256(modelFile) == MODEL_SHA256) {
                     mainHandler.post { onProgress(100, "Modelo já instalado e verificado.") }
@@ -53,24 +58,37 @@ class LocalQwenAssistant(context: Context) {
                     return@execute
                 }
 
-                val parent = modelFile.parentFile ?: error("Diretório do modelo indisponível.")
-                if (!parent.exists() && !parent.mkdirs()) error("Não foi possível criar a pasta da IA.")
-                val available = StatFs(parent.absolutePath).availableBytes
-                val required = MODEL_BYTES_MIN + 350L * 1024L * 1024L
+                val parent = modelFile.parentFile ?: error("Diretório interno do modelo indisponível.")
+                if (!parent.exists() && !parent.mkdirs()) error("Não foi possível criar a pasta interna da IA.")
+                val storagePath = appContext.getExternalFilesDir(null)?.absolutePath ?: parent.absolutePath
+                val available = StatFs(storagePath).availableBytes
+                val required = MODEL_EXPECTED_BYTES + 350L * 1024L * 1024L
                 if (available < required) {
-                    error("Espaço insuficiente. Libere pelo menos 1,3 GB para baixar e validar o modelo.")
+                    error("Espaço insuficiente. Libere pelo menos 1,3 GB no armazenamento do aparelho.")
                 }
 
                 val partial = File(parent, "$MODEL_FILE.part")
                 var verified = false
                 var lastFailure = "Falha desconhecida no download."
 
-                // Each attempt starts a fresh request so Hugging Face can issue a new Xet URL.
+                // Salva em Downloads/AURORA IA, visível no app Meus Arquivos.
+                // Após SHA-256, copia para a área privada usada pelo LiteRT-LM.
                 for (attempt in 1..3) {
-                    if (partial.exists() && !partial.delete()) {
-                        error("Não foi possível limpar o arquivo temporário para uma nova tentativa.")
-                    }
+                    publicDownloadUri?.let { appContext.contentResolver.delete(it, null, null) }
+                    publicDownloadUri = null
+                    if (partial.exists()) partial.delete()
+
                     try {
+                        val values = ContentValues().apply {
+                            put(MediaStore.Downloads.DISPLAY_NAME, MODEL_FILE)
+                            put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
+                            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/AURORA IA")
+                            put(MediaStore.Downloads.IS_PENDING, 1)
+                        }
+                        publicDownloadUri = appContext.contentResolver.insert(
+                            MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
+                        ) ?: error("O Android não permitiu criar o arquivo na pasta Downloads.")
+
                         val connection = (URL(MODEL_URL).openConnection() as HttpURLConnection).apply {
                             connectTimeout = 30000
                             readTimeout = 120000
@@ -85,9 +103,7 @@ class LocalQwenAssistant(context: Context) {
                         try {
                             connection.connect()
                             val response = connection.responseCode
-                            if (response !in 200..299) {
-                                error("Servidor do modelo respondeu HTTP $response.")
-                            }
+                            if (response !in 200..299) error("Servidor do modelo respondeu HTTP $response.")
                             val contentType = connection.contentType.orEmpty().lowercase()
                             if (contentType.contains("text/html") || contentType.contains("application/json")) {
                                 error("O servidor retornou uma página ou resposta de erro, não o arquivo do modelo.")
@@ -97,45 +113,74 @@ class LocalQwenAssistant(context: Context) {
                                 error("Tamanho informado pelo servidor diferente do modelo oficial ($total bytes).")
                             }
 
+                            val output = appContext.contentResolver.openOutputStream(publicDownloadUri!!, "w")
+                                ?: error("Não foi possível gravar o modelo na pasta Downloads.")
                             connection.inputStream.use { input ->
-                                FileOutputStream(partial).use { output ->
+                                output.use { stream ->
                                     val buffer = ByteArray(256 * 1024)
                                     var downloaded = 0L
                                     var lastPercent = -1
                                     while (true) {
                                         val count = input.read(buffer)
                                         if (count < 0) break
-                                        output.write(buffer, 0, count)
+                                        stream.write(buffer, 0, count)
                                         downloaded += count
                                         val percent = ((downloaded * 100) / MODEL_EXPECTED_BYTES)
                                             .toInt().coerceIn(0, 99)
                                         if (percent != lastPercent) {
                                             lastPercent = percent
-                                            val detail = "${downloaded / (1024 * 1024)} MB de ${MODEL_EXPECTED_BYTES / (1024 * 1024)} MB (tentativa $attempt/3)"
+                                            val detail = "${downloaded / (1024 * 1024)} MB de ${MODEL_EXPECTED_BYTES / (1024 * 1024)} MB (tentativa $attempt/3) — Downloads/AURORA IA"
                                             mainHandler.post { onProgress(percent, detail) }
                                         }
                                     }
-                                    output.fd.sync()
+                                    stream.flush()
                                 }
                             }
                         } finally {
                             connection.disconnect()
                         }
 
-                        val actualBytes = partial.length()
+                        val downloadedFile = appContext.contentResolver.openInputStream(publicDownloadUri!!)
+                            ?: error("Não foi possível reabrir o arquivo salvo em Downloads para verificar.")
+                        val digest = MessageDigest.getInstance("SHA-256")
+                        var actualBytes = 0L
+                        downloadedFile.buffered().use { input ->
+                            val buffer = ByteArray(1024 * 1024)
+                            while (true) {
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                actualBytes += count
+                                digest.update(buffer, 0, count)
+                            }
+                        }
                         if (actualBytes != MODEL_EXPECTED_BYTES) {
-                            error("Download incompleto: recebidos $actualBytes bytes; esperado $MODEL_EXPECTED_BYTES.")
+                            error("Download incompleto em Downloads: recebidos $actualBytes bytes; esperado $MODEL_EXPECTED_BYTES.")
+                        }
+                        val actualHash = digest.digest().joinToString("") { "%02x".format(it) }
+                        if (!actualHash.equals(MODEL_SHA256, ignoreCase = true)) {
+                            error("SHA-256 divergente. O arquivo em Downloads não passou na verificação de integridade.")
                         }
 
-                        val digest = sha256(partial)
-                        if (!digest.equals(MODEL_SHA256, ignoreCase = true)) {
-                            error("SHA-256 divergente. Recebido: ${digest.take(16)}…; esperado: ${MODEL_SHA256.take(16)}….")
+                        val source = appContext.contentResolver.openInputStream(publicDownloadUri!!)
+                            ?: error("Não foi possível ler o modelo validado em Downloads.")
+                        source.use { input ->
+                            FileOutputStream(partial).use { output ->
+                                input.copyTo(output, 1024 * 1024)
+                                output.fd.sync()
+                            }
+                        }
+                        if (partial.length() != MODEL_EXPECTED_BYTES || sha256(partial) != MODEL_SHA256) {
+                            error("A cópia interna do modelo não passou na verificação de integridade.")
                         }
 
                         verified = true
                         break
                     } catch (failure: Throwable) {
                         lastFailure = failure.message ?: failure.javaClass.simpleName
+                        publicDownloadUri?.let {
+                            try { appContext.contentResolver.delete(it, null, null) } catch (_: Exception) {}
+                        }
+                        publicDownloadUri = null
                         if (partial.exists()) partial.delete()
                         if (attempt < 3) {
                             mainHandler.post {
@@ -146,14 +191,23 @@ class LocalQwenAssistant(context: Context) {
                     }
                 }
 
-                if (!verified) {
-                    error("Não foi possível validar o modelo após 3 tentativas. $lastFailure Verifique a conexão e tente novamente.")
-                }
+                if (!verified) error("Não foi possível baixar e validar o modelo após 3 tentativas. $lastFailure")
                 if (modelFile.exists() && !modelFile.delete()) error("Não foi possível substituir o modelo antigo.")
-                if (!partial.renameTo(modelFile)) error("Não foi possível finalizar a instalação do modelo.")
-                mainHandler.post { onProgress(100, "Modelo baixado e verificado com sucesso.") }
+                if (!partial.renameTo(modelFile)) error("Não foi possível finalizar a instalação interna do modelo.")
+
+                val publish = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
+                if (publicDownloadUri == null ||
+                    appContext.contentResolver.update(publicDownloadUri!!, publish, null, null) <= 0
+                ) {
+                    error("O modelo foi validado, mas o Android não conseguiu concluir sua publicação na pasta Downloads.")
+                }
+
+                mainHandler.post { onProgress(100, "Modelo salvo em Downloads/AURORA IA e instalado na AURORA.") }
                 mainHandler.post { onComplete(Result.success(modelFile)) }
             } catch (error: Throwable) {
+                publicDownloadUri?.let {
+                    try { appContext.contentResolver.delete(it, null, null) } catch (_: Exception) {}
+                }
                 mainHandler.post { onComplete(Result.failure(error)) }
             }
         }
