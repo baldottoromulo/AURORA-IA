@@ -1551,6 +1551,7 @@ private fun openWazeDestination(destination: String) {
     }
 
 
+
     private fun showMessageReview(message: String) {
         ensureQwenAndReview(message) { reviewed, aiSucceeded ->
             val preview = android.widget.EditText(this).apply {
@@ -1561,26 +1562,14 @@ private fun openWazeDestination(destination: String) {
             }
             AlertDialog.Builder(this)
                 .setTitle("Revisão inteligente da mensagem")
-                .setMessage(if (aiSucceeded) "Qwen3 revisou o texto localmente. Confira antes de copiar ou continuar."
+                .setMessage(if (aiSucceeded) "Qwen3 revisou o texto localmente. Confira antes de copiar."
                     else "A IA não concluiu a revisão. O texto original foi preservado.")
                 .setView(preview)
                 .setNegativeButton("Cancelar", null)
-                .setNeutralButton("Copiar") { _, _ ->
+                .setPositiveButton("Copiar texto") { _, _ ->
                     val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
                     clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Mensagem revisada", preview.text.toString()))
-                    updateStatus("Texto copiado. Nenhuma mensagem foi enviada.")
-                }
-                .setPositiveButton("Preparar texto") { _, _ ->
-                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_TEXT, preview.text.toString())
-                    }
-                    try {
-                        startActivity(Intent.createChooser(sendIntent, "Escolha o aplicativo para continuar"))
-                        updateStatus("Texto preparado para revisão no aplicativo escolhido. Envio não automático.")
-                    } catch (_: Exception) {
-                        updateStatus("Não foi possível abrir o menu de compartilhamento.")
-                    }
+                    updateStatus("Texto copiado. A AURORA não abriu nenhum outro aplicativo.")
                 }
                 .show()
         }
