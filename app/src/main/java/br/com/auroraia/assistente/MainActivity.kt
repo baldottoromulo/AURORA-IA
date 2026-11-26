@@ -1548,37 +1548,40 @@ private fun openWazeDestination(destination: String) {
         pendingMessageDraft.clear()
     }
 
-    private fun showMessageReview(message: String) {
-        val refined = refineDictatedTextLocally(message)
-        val preview = android.widget.EditText(this).apply {
-            setText(refined)
-            minLines = 3
-            textSize = 17f
-        }
 
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Revise sua mensagem")
-            .setMessage("Sugestão local sem envio de dados. A revisão automática avançada de gramática ainda não está integrada; confira o sentido antes de continuar.")
-            .setView(preview)
-            .setNegativeButton("Cancelar", null)
-            .setNeutralButton("Copiar") { _, _ ->
-                val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Mensagem revisada", preview.text.toString()))
-                updateStatus("Texto copiado. Nenhuma mensagem foi enviada.")
+    private fun showMessageReview(message: String) {
+        ensureQwenAndReview(message) { reviewed, aiSucceeded ->
+            val preview = android.widget.EditText(this).apply {
+                setText(reviewed)
+                minLines = 4
+                textSize = 17f
+                setSelection(text.length)
             }
-            .setPositiveButton("Preparar envio") { _, _ ->
-                val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_TEXT, preview.text.toString())
+            AlertDialog.Builder(this)
+                .setTitle("Revisão inteligente da mensagem")
+                .setMessage(if (aiSucceeded) "Qwen3 revisou o texto localmente. Confira antes de copiar ou continuar."
+                    else "A IA não concluiu a revisão. O texto original foi preservado.")
+                .setView(preview)
+                .setNegativeButton("Cancelar", null)
+                .setNeutralButton("Copiar") { _, _ ->
+                    val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Mensagem revisada", preview.text.toString()))
+                    updateStatus("Texto copiado. Nenhuma mensagem foi enviada.")
                 }
-                try {
-                    startActivity(Intent.createChooser(sendIntent, "Escolha o aplicativo para continuar"))
-                    updateStatus("Texto preparado para revisão no aplicativo escolhido. Envio não automático.")
-                } catch (_: Exception) {
-                    updateStatus("Não foi possível abrir o menu de compartilhamento.")
+                .setPositiveButton("Preparar texto") { _, _ ->
+                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, preview.text.toString())
+                    }
+                    try {
+                        startActivity(Intent.createChooser(sendIntent, "Escolha o aplicativo para continuar"))
+                        updateStatus("Texto preparado para revisão no aplicativo escolhido. Envio não automático.")
+                    } catch (_: Exception) {
+                        updateStatus("Não foi possível abrir o menu de compartilhamento.")
+                    }
                 }
-            }
-            .show()
+                .show()
+        }
     }
 
     private fun updateStatus(message: String) {
