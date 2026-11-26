@@ -537,6 +537,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             pendingMessageRecipientName = null
             pendingMessageRecipientNumber = null
             pendingMessageWhatsAppPackage = null
+            pendingMessageProfileIndex = null
             updateStatus("Preparação da mensagem cancelada.")
             speak("Mensagem cancelada.")
             return
@@ -1484,6 +1485,7 @@ private fun openWazeDestination(destination: String) {
             .setPositiveButton("Abrir conversa", null)
             .create()
         dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener { clearPendingMessageState(); dialog.dismiss() }
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
                 preview.setText(original); preview.setSelection(preview.text.length)
             }
@@ -1600,6 +1602,7 @@ private fun openWazeDestination(destination: String) {
 
     override fun onDestroy() {
         speechRecognizer?.destroy()
+        localQwen.close()
         tts?.stop()
         tts?.shutdown()
         super.onDestroy()
@@ -1629,6 +1632,7 @@ private fun openWazeDestination(destination: String) {
             } else {
                 pendingMessageRecipientName = null
                 pendingMessageWhatsAppPackage = null
+                pendingMessageProfileIndex = null
                 updateStatus("Permissão de contatos negada. Nenhuma mensagem foi preparada.")
                 speak("Sem permissão para consultar os contatos, não posso preparar a mensagem.")
             }
