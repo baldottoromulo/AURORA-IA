@@ -54,10 +54,13 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var pendingMessageRecipientName: String? = null
     private var pendingMessageRecipientNumber: String? = null
     private var pendingMessageWhatsAppPackage: String? = null
+    private var pendingMessageProfileIndex: Int? = null
+    private lateinit var localQwen: LocalQwenAssistant
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         keyguardManager = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
+        localQwen = LocalQwenAssistant(this)
         tts = TextToSpeech(this, this)
         buildInterface()
         updateStatus("Pronto. Toque no microfone e diga um comando.")
@@ -569,6 +572,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                         ?.takeIf { it == "com.whatsapp" || it == "com.whatsapp.w4b" }
                         ?: prefs.getString("whatsapp_package", "com.whatsapp") ?: "com.whatsapp"
                     pendingMessageWhatsAppPackage = packageName
+                    pendingMessageProfileIndex = 0
                     updateStatus("Perfil 1 selecionado para $pendingRecipient.")
                     beginWhatsAppMessage(pendingRecipient, packageName)
                 } else {
@@ -590,6 +594,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     }
                     val packageName = prefs.getString("profile_2_package", "com.whatsapp") ?: "com.whatsapp"
                     pendingMessageWhatsAppPackage = packageName
+                    pendingMessageProfileIndex = 1
                     updateStatus("Perfil 2 selecionado para $pendingRecipient.")
                     beginWhatsAppMessage(pendingRecipient, packageName)
                 } else {
@@ -792,6 +797,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             val packageName = prefs.getString("profile_${profileIndex + 1}_package", null)
                 ?.takeIf { it == "com.whatsapp" || it == "com.whatsapp.w4b" }
                 ?: if (profileIndex == 0) prefs.getString("whatsapp_package", "com.whatsapp") ?: "com.whatsapp" else "com.whatsapp"
+            pendingMessageProfileIndex = profileIndex
+            pendingMessageWhatsAppPackage = packageName
             beginWhatsAppMessage(recipient, packageName)
         }
 
@@ -1371,10 +1378,11 @@ private fun openWazeDestination(destination: String) {
             startListening()
             return
         }
-        showWhatsAppMessageReview(
+        reviewWhatsAppMessageWithQwen(
             pendingMessageRecipientName.orEmpty(),
             pendingMessageRecipientNumber.orEmpty(),
             pendingMessageWhatsAppPackage ?: "com.whatsapp",
+            pendingMessageProfileIndex ?: 0,
             completeMessage
         )
     }
@@ -1394,40 +1402,150 @@ private fun openWazeDestination(destination: String) {
         return value
     }
 
-    private fun showWhatsAppMessageReview(name: String, rawNumber: String, packageName: String, message: String) {
-        val refined = refineDictatedTextLocally(message)
-        val preview = android.widget.EditText(this).apply {
-            setText(refined)
-            minLines = 3
-            textSize = 17f
+
+    private fun reviewWhatsAppMessageWithQwen(name: String, rawNumber: String, packageName: String, profileIndex: Int, original: String) {
+        ensureQwenAndReview(original) { reviewed, aiSucceeded ->
+            showWhatsAppMessageReview(name, rawNumber, packageName, profileIndex, original, reviewed, aiSucceeded)
         }
+    }
+
+    private fun ensureQwenAndReview(original: String, callback: (String, Boolean) -> Unit) {
+        if (localQwen.isModelInstalled()) { runQwenReview(original, callback); return }
         AlertDialog.Builder(this)
+            .setTitle("Instalar inteligência artificial local")
+            .setMessage("A AURORA precisa baixar o Qwen3 1.7B (aproximadamente 977 MB). O modelo ficará armazenado no aparelho e fará as correções sem enviar suas mensagens para servidores. Recomendamos Wi-Fi e pelo menos 1,3 GB livres.")
+            .setNegativeButton("Agora não", null)
+            .setPositiveButton("Baixar e revisar") { _, _ ->
+                val progress = android.app.ProgressDialog(this).apply {
+                    setTitle("Instalando Qwen3")
+                    setMessage("Baixando o modelo de inteligência artificial…")
+                    setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL)
+                    max = 100
+                    setCancelable(false)
+                    show()
+                }
+                localQwen.downloadModel(
+                    onProgress = { percent, detail -> progress.progress = percent; progress.setMessage("Baixando Qwen3… $detail") },
+                    onComplete = { result ->
+                        progress.dismiss()
+                        result.fold(
+                            onSuccess = { runQwenReview(original, callback) },
+                            onFailure = { failure ->
+                                updateStatus("Não foi possível instalar a IA local: ${failure.message}")
+                                AlertDialog.Builder(this).setTitle("IA não instalada")
+                                    .setMessage("${failure.message}\n\nO texto original foi preservado.")
+                                    .setPositiveButton("Usar texto original") { _, _ -> callback(original, false) }
+                                    .setNegativeButton("Cancelar", null).show()
+                            }
+                        )
+                    }
+                )
+            }.show()
+    }
+
+    private fun runQwenReview(original: String, callback: (String, Boolean) -> Unit) {
+        updateStatus("Qwen3 está revisando sua mensagem localmente…")
+        val progress = android.app.ProgressDialog(this).apply {
+            setMessage("A inteligência artificial está corrigindo o texto no aparelho…")
+            setCancelable(false)
+            show()
+        }
+        localQwen.review(original) { result ->
+            progress.dismiss()
+            result.fold(
+                onSuccess = { callback(it, true) },
+                onFailure = { failure ->
+                    updateStatus("A revisão inteligente falhou. O texto original foi preservado.")
+                    AlertDialog.Builder(this).setTitle("Não foi possível concluir a revisão")
+                        .setMessage("${failure.message}\n\nNenhuma mensagem foi enviada.")
+                        .setPositiveButton("Usar texto original") { _, _ -> callback(original, false) }
+                        .setNegativeButton("Cancelar", null).show()
+                }
+            )
+        }
+    }
+
+    private fun showWhatsAppMessageReview(
+        name: String, rawNumber: String, packageName: String, profileIndex: Int,
+        original: String, reviewed: String, aiSucceeded: Boolean
+    ) {
+        val preview = android.widget.EditText(this).apply {
+            setText(reviewed); minLines = 4; maxLines = 12; textSize = 17f
+            setSelection(text.length)
+        }
+        val dialog = AlertDialog.Builder(this)
             .setTitle("Mensagem para $name")
-            .setMessage("Sugestão de organização local (sem internet): espaços, início de frase e pontuação final. Confira nomes, acentos e sentido; a AURORA não envia automaticamente.")
+            .setMessage(if (aiSucceeded)
+                "Revisão inteligente Qwen3 concluída no aparelho. Confira o texto. A AURORA não envia automaticamente."
+                else "A revisão inteligente não foi concluída. O texto original foi preservado. Confira antes de continuar.")
             .setView(preview)
             .setNegativeButton("Cancelar", null)
-            .setPositiveButton("Abrir conversa") { _, _ ->
-                val digits = rawNumber.filter { it.isDigit() }
-                val international = if (digits.startsWith("55")) digits else "55$digits"
-                val url = Uri.parse("https://wa.me/$international?text=" + Uri.encode(preview.text.toString()))
-                try {
-                    // Não remover setPackage no fallback: isso abriria o seletor do
-                    // Android e poderia apresentar os dois WhatsApps, contrariando
-                    // a escolha de perfil feita antes do ditado.
-                    val intent = Intent(Intent.ACTION_VIEW, url).setPackage(packageName)
-                    if (intent.resolveActivity(packageManager) == null) {
-                        updateStatus("O WhatsApp escolhido não aceitou a abertura direta desta conversa. Nenhum outro WhatsApp será aberto automaticamente. Confira se o perfil selecionado está instalado e ativo.")
-                        speak("Não consegui abrir a conversa no perfil escolhido. Não vou abrir outro WhatsApp por engano.")
-                        return@setPositiveButton
-                    }
-                    startActivity(intent)
-                    updateStatus("Conversa de $name aberta no aplicativo selecionado com o texto preenchido. Revise e toque em Enviar no WhatsApp.")
-                } catch (_: Exception) {
-                    updateStatus("Não foi possível abrir a conversa no WhatsApp selecionado. Nenhuma mensagem foi enviada.")
-                    speak("Não foi possível abrir a conversa no perfil escolhido.")
-                }
+            .setNeutralButton("Usar original", null)
+            .setPositiveButton("Abrir conversa", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                preview.setText(original); preview.setSelection(preview.text.length)
             }
-            .show()
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val approved = preview.text.toString().trim()
+                if (approved.isBlank()) { preview.error = "A mensagem não pode ficar vazia."; return@setOnClickListener }
+                openApprovedWhatsAppConversation(name, rawNumber, packageName, profileIndex, approved)
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
+    }
+
+    private fun openApprovedWhatsAppConversation(name: String, rawNumber: String, packageName: String, profileIndex: Int, approvedText: String) {
+        if (keyguardManager.isKeyguardLocked) { updateStatus("Ação bloqueada: desbloqueie o aparelho antes de abrir o WhatsApp."); return }
+        if (profileIndex == 1) {
+            val prefs = getSharedPreferences("aurora_settings", MODE_PRIVATE)
+            val component = prefs.getString("profile_2_component", null)?.let { android.content.ComponentName.unflattenFromString(it) }
+            val savedUser = prefs.getString("profile_2_user_handle", null)
+            if (component == null || savedUser.isNullOrBlank()) {
+                updateStatus("O WhatsApp 2 não está vinculado. Nenhuma conversa foi aberta."); return
+            }
+            try {
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Mensagem para $name", approvedText))
+                val launcherApps = getSystemService(LAUNCHER_APPS_SERVICE) as android.content.pm.LauncherApps
+                val targetUser = launcherApps.profiles.firstOrNull { it.toString() == savedUser }
+                    ?: error("O perfil Android selecionado não está disponível.")
+                launcherApps.startMainActivity(component, targetUser, null, null)
+                updateStatus("WhatsApp 2 aberto e texto copiado. Localize $name e cole a mensagem. O Android/Samsung não oferece API pública para abrir diretamente uma conversa no perfil clonado.")
+                speak("Abri o WhatsApp dois e copiei a mensagem. Localize o contato e cole o texto. Nenhuma mensagem foi enviada.")
+                clearPendingMessageState()
+            } catch (failure: Exception) {
+                updateStatus("Não consegui abrir o perfil 2. Nenhuma mensagem foi enviada: ${failure.message}")
+            }
+            return
+        }
+        val digits = rawNumber.filter { it.isDigit() }
+        if (digits.isBlank()) { updateStatus("O telefone do contato está inválido. Nenhuma conversa foi aberta."); return }
+        val international = if (digits.startsWith("55")) digits else "55$digits"
+        val targetPackage = if (packageName == "com.whatsapp.w4b") "com.whatsapp.w4b" else "com.whatsapp"
+        val uri = Uri.parse("https://wa.me/$international?text=${Uri.encode(approvedText)}")
+        val intent = Intent(Intent.ACTION_VIEW, uri).setPackage(targetPackage)
+        try {
+            if (intent.resolveActivity(packageManager) == null) {
+                updateStatus("O WhatsApp selecionado não conseguiu abrir a conversa. Nenhum outro perfil será aberto automaticamente."); return
+            }
+            startActivity(intent)
+            updateStatus("Conversa de $name aberta no perfil selecionado com o texto preenchido. Confira e toque manualmente em Enviar.")
+            speak("Conversa aberta. Confira a mensagem e toque em enviar quando estiver pronto.")
+            clearPendingMessageState()
+        } catch (_: Exception) {
+            updateStatus("Não foi possível abrir a conversa no perfil selecionado. Nenhuma mensagem foi enviada.")
+        }
+    }
+
+    private fun clearPendingMessageState() {
+        pendingMessageRecipientName = null
+        pendingMessageRecipientNumber = null
+        pendingMessageWhatsAppPackage = null
+        pendingMessageProfileIndex = null
+        pendingMessageDraft.clear()
     }
 
     private fun showMessageReview(message: String) {
