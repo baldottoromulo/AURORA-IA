@@ -249,10 +249,11 @@ class LocalQwenAssistant(context: Context) {
                     </mensagem>
                 """.trimIndent()
 
+                // O template nativo do Qwen3 neste modelo LiteRT-LM não aceita
+                // systemInstruction separado: a renderização falha ao concatenar
+                // string com sequência (nativeSendMessage / template:14).
+                // Todas as instruções já estão incorporadas ao prompt do usuário.
                 val config = ConversationConfig(
-                    systemInstruction = Contents.of(
-                        "Revise mensagens em português brasileiro com máxima fidelidade ao texto original. Retorne apenas o texto revisado."
-                    ),
                     thinkingConfig = ThinkingConfig(enableThinking = false, thinkingTokenBudget = 0),
                     maxOutputToken = 1200
                 )
