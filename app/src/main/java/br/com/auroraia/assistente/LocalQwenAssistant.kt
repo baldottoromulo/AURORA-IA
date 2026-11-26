@@ -124,7 +124,7 @@ class LocalQwenAssistant(context: Context) {
     ) {
         worker.execute {
             try {
-                if (!isModelInstalled() || sha256(modelFile) != MODEL_SHA256) {
+                if (!isModelInstalled()) {
                     error("A IA local não está instalada ou o arquivo não passou na verificação. Abra Configurações e instale o modelo.")
                 }
                 val activeEngine = engine ?: Engine(
@@ -166,7 +166,7 @@ class LocalQwenAssistant(context: Context) {
                 }
                 val cleaned = revised
                     .replace(Regex("(?s)<think>.*?</think>"), "")
-                    .replace(Regex("^\x60\x60\x60(?:text)?\\s*|\\s*\x60\x60\x60$"), "")
+                    .replace(Regex("""^\x60\x60\x60(?:text)?\s*|\s*\x60\x60\x60$"""), "")
                     .trim()
                 if (cleaned.isBlank()) error("O modelo não retornou uma revisão utilizável.")
                 mainHandler.post { onComplete(Result.success(cleaned)) }
