@@ -138,6 +138,22 @@ class SettingsActivity : Activity() {
             setPadding(0, 16, 0, 8)
         }, matchWrap())
 
+        root.addView(TextView(this).apply {
+            text = "INTELIGÊNCIA ARTIFICIAL LOCAL"
+            textSize = 20f
+            setTextColor(0xFF72D9E8.toInt())
+            setPadding(0, 22, 0, 8)
+        }, matchWrap())
+        root.addView(TextView(this).apply {
+            text = "Qwen3 1.7B • aproximadamente 977 MB • funciona no aparelho, sem enviar suas mensagens para a internet. Requer espaço livre para instalação."
+            textSize = 13f
+            setTextColor(0xFFB9C8DD.toInt())
+        }, matchWrap())
+        root.addView(Button(this).apply {
+            text = "BAIXAR / VERIFICAR IA QWEN3"
+            setOnClickListener { installLocalAi() }
+        }, matchWrap())
+
         root.addView(Button(this).apply {
             text = "SALVAR CONFIGURAÇÕES"
             setOnClickListener { saveSettings() }
@@ -323,6 +339,45 @@ class SettingsActivity : Activity() {
             return
         }
         startActivity(launch)
+    }
+
+
+    private fun installLocalAi() {
+        if (keyguardManager.isKeyguardLocked) {
+            Toast.makeText(this, "Desbloqueie o aparelho antes de instalar a IA.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val assistant = LocalQwenAssistant(this)
+        val progress = android.app.ProgressDialog(this).apply {
+            setTitle("Instalando Qwen3")
+            setMessage("Verificando espaço e preparando o download…")
+            setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL)
+            max = 100
+            setCancelable(false)
+            show()
+        }
+        assistant.downloadModel(
+            onProgress = { percent, detail ->
+                progress.progress = percent
+                progress.setMessage("Qwen3: $detail")
+            },
+            onComplete = { result ->
+                progress.dismiss()
+                assistant.close()
+                result.fold(
+                    onSuccess = {
+                        Toast.makeText(this, "Qwen3 instalado e verificado. A revisão local está pronta para o próximo uso.", Toast.LENGTH_LONG).show()
+                    },
+                    onFailure = {
+                        AlertDialog.Builder(this)
+                            .setTitle("Não foi possível instalar a IA")
+                            .setMessage(it.message ?: "Erro desconhecido.")
+                            .setPositiveButton("OK", null)
+                            .show()
+                    }
+                )
+            }
+        )
     }
 
     private fun matchWrap() = LinearLayout.LayoutParams(
