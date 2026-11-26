@@ -1,6 +1,9 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    dependencies {
+        implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.0")
+    }
 }
 
 android {
