@@ -162,7 +162,7 @@ class LocalQwenAssistant(context: Context) {
                     maxOutputToken = 1200
                 )
                 val revised = activeEngine.createConversation(config).use { conversation ->
-                    conversation.sendMessage(prompt).text.trim()
+                    conversation.sendMessage(prompt).toString().trim()
                 }
                 val cleaned = revised
                     .replace(Regex("(?s)<think>.*?</think>"), "")
